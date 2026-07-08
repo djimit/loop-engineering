@@ -74,6 +74,27 @@ The integration gap: OpenMythos defines WHAT should be governed, loop-engineerin
 
 **Rationale:** Concentrating human interaction at the end respects the governance model (validate everything, then present a complete picture for decision) while enabling full autonomy during execution.
 
+### Decision 6: Correlation ID Propagation
+**Choice:** Every orchestrator run generates a UUID correlation_id that is propagated to all downstream records: loop_runs.metadata, loop_events.metadata, loop_checkpoints.metadata, governance_events.metadata_json, and policy_violations.metadata.
+
+**Alternatives considered:**
+- *Per-event UUID* → Rejected: impossible to trace a single orchestration run across systems
+- *Timestamp-based correlation* → Rejected: collisions when multiple runs execute within the same second
+- *Database auto-increment* → Rejected: no portability across SQLite instances; breaks if DB is rebuilt
+
+**Rationale:** UUID v4 correlation_id enables end-to-end tracing without coordination. Every record in Djitimflo created by the orchestrator carries the same correlation_id, enabling queries like `SELECT * FROM loop_events WHERE metadata LIKE '%<correlation_id>%'` to reconstruct a full run across all tables.
+
+**Implementation:**
+```python
+correlation_id = str(uuid.uuid4())  # Generated once at orchestrator init
+
+# Propagated to every INSERT:
+conn.execute(
+    "INSERT INTO loop_events (id, loop_run_id, ..., metadata) VALUES (?, ?, ?, ?)",
+    (event_id, run_id, ..., json.dumps({"correlation_id": correlation_id})),
+)
+```
+
 ## Cross-System Coupling Analysis
 
 The three systems are connected via explicit, unidirectional data flows. Coupling is intentional but bounded:
