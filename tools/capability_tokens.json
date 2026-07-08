@@ -1,0 +1,20 @@
+{
+  "L1": {
+    "scopes": ["read"],
+    "risk_class": "low",
+    "max_budget": 10000,
+    "description": "Report-only mode. No write operations."
+  },
+  "L2": {
+    "scopes": ["read", "pr_create"],
+    "risk_class": "medium",
+    "max_budget": 50000,
+    "description": "PR creation mode. Can create draft PRs but not merge."
+  },
+  "L3": {
+    "scopes": ["read", "pr_create", "merge", "publish"],
+    "risk_class": "high",
+    "max_budget": 200000,
+    "description": "Full automation mode. Can merge and publish within allowlist and mechanical gates."
+  }
+}

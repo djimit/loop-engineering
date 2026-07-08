@@ -1,0 +1,30 @@
+name: Prompt Injection Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  prompt-injection-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run prompt injection tests
+        run: python3 tests/prompt_injection/test_injection.py
+
+      - name: Run governance seeding validation
+        run: python3 tools/seed_governance.py
+
+      - name: Run telemetry import validation
+        run: python3 tools/import_telemetry.py
+
+      - name: Security — check for hardcoded secrets
+        run: |
+          ! grep -r "sk-" --include="*.py" --include="*.md" tools/ tests/ .swarm/ 2>/dev/null
+          ! grep -r "npm_" --include="*.py" --include="*.md" tools/ tests/ .swarm/ 2>/dev/null
