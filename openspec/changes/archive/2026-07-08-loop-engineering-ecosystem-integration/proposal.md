@@ -35,3 +35,15 @@ Loop-engineering is een bewezen reference implementation voor agent-loop governa
 - **MCP servers**: JuraRegel MCP server erft security patterns van loop-mcp-server
 - **Security**: Prompt-injection resilience, path traversal bescherming, token-segregatie via capability_tokens
 - **Human interaction**: Geconcentreerd aan einde via escalation gateway, niet verspreid over pipeline
+
+## Mitigation Strategies
+
+| Risk | Mitigation | Verified |
+|---|---|---|
+| Bus factor (single maintainer) | CODEOWNERS with per-component ownership; security-critical paths require review | ✅ CODEOWNERS added |
+| Cross-system coupling cascade | Unidirectional data flow; per-phase isolation; circuit breaker prevents propagation | ✅ Design section added |
+| Schema drift (Djitimflo) | Runtime schema detection; idempotent UPSERT; additive-only migrations | ✅ In seed_governance.py |
+| Prompt-injection via untrusted content | Deterministic negative test suite (5 patterns); CI gate on every PR | ✅ 5/5 tests pass |
+| Infinite loop / token burn | Per-phase timeout (30 min) + global timeout (4h); cumulative budget tracking | ✅ In orchestrator |
+| Over-reach (L3 automation) | Capability tokens with scoped permissions; 24h expiry; human gate for sensitive paths | ✅ In capability_tokens.json |
+| Verifier theater (false assurance) | Deterministic checks, not LLM-based; all gates produce auditable evidence | ✅ In qa_gates.py |
