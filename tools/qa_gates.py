@@ -146,7 +146,9 @@ def check_feasibility(proposal: str, design: str) -> dict:
 
     # Check if referenced paths exist
     if "Djitimflo" in proposal:
-        db_path = os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+        db_path = os.environ.get(
+            "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+        )
         if not os.path.exists(db_path):
             findings.append(f"Djitimflo database not found at {db_path}")
             score -= 3

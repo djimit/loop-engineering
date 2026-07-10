@@ -13,7 +13,9 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-DJITIMFLO_DB = os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+DJITIMFLO_DB = os.environ.get(
+    "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+)
 ESCALATION_TIMEOUT_HOURS = int(os.environ.get("ESCALATION_TIMEOUT_HOURS", 72))
 
 

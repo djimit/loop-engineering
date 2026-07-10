@@ -15,10 +15,12 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-DJITIMFLO_DB = os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+DJITIMFLO_DB = os.environ.get(
+    "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+)
 REPO_ROOT = Path(__file__).parent.parent
 CONSTRAINTS_FILE = REPO_ROOT / "loop-constraints.md"
-TOKEN_CONFIG_FILE = REPO_ROOT / "tools" / "capability_tokens.json"
+TOKEN_CONFIG_FILE = REPO_ROOT / "tools" / "capability_config.json"
 
 
 def parse_constraints(md_path: Path) -> list[dict]:

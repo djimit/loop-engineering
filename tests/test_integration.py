@@ -6,9 +6,12 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-DJITIMFLO_DB = os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+_tmp_db = tempfile.mkstemp(suffix=".sqlite", prefix="loop_test_")[1]
+os.environ["LOOP_DB_PATH"] = _tmp_db
+DJITIMFLO_DB = _tmp_db
 REPO_ROOT = Path(__file__).parent.parent
 
 
@@ -151,22 +154,26 @@ def main():
         ("prompt_injection_gate", test_prompt_injection_gate),
         ("qa_gates_auto", test_qa_gates_auto),
         ("qa_gates_dispatch", test_qa_gates_dispatch),
-        ("circuit_breaker", test_circuit_breaker),
-        ("djitimflo_tables_populated", test_djitimflo_tables_populated),
         ("autonomous_execution", test_autonomous_execution),
+        ("djitimflo_tables_populated", test_djitimflo_tables_populated),
+        ("circuit_breaker", test_circuit_breaker),
     ]
 
     passed = 0
     failed = 0
 
-    for name, test_fn in tests:
-        try:
-            test_fn()
-            passed += 1
-            print(f"  [PASS] {name}")
-        except (AssertionError, Exception) as e:
-            failed += 1
-            print(f"  [FAIL] {name}: {e}")
+    try:
+        for name, test_fn in tests:
+            try:
+                test_fn()
+                passed += 1
+                print(f"  [PASS] {name}")
+            except (AssertionError, Exception) as e:
+                failed += 1
+                print(f"  [FAIL] {name}: {e}")
+    finally:
+        if os.path.exists(_tmp_db):
+            os.unlink(_tmp_db)
 
     print(f"\nIntegration tests: {passed}/{passed + failed} passed")
     return 0 if failed == 0 else 1
