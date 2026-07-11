@@ -13,6 +13,7 @@ Can run in two modes:
 """
 
 import json
+import logging
 import os
 import re
 import sys
@@ -20,7 +21,9 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).parent.parent
+from config import REPO_ROOT, get_db_path
+
+logger = logging.getLogger(__name__)
 # Check active location first, fall back to archive
 _active = REPO_ROOT / "openspec" / "changes" / "loop-engineering-ecosystem-integration"
 _archived = (
@@ -146,9 +149,7 @@ def check_feasibility(proposal: str, design: str) -> dict:
 
     # Check if referenced paths exist
     if "Djitimflo" in proposal:
-        db_path = os.environ.get(
-            "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
-        )
+        db_path = get_db_path()
         if not os.path.exists(db_path):
             findings.append(f"Djitimflo database not found at {db_path}")
             score -= 3

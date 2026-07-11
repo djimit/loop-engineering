@@ -6,16 +6,17 @@ approval interface with approve/reject/modify options.
 """
 
 import json
+import logging
 import os
 import sqlite3
 import sys
 import uuid
 from datetime import datetime, timedelta
-from pathlib import Path
 
-DJITIMFLO_DB = os.environ.get(
-    "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
-)
+from config import db_connection, get_db_path
+
+DJITIMFLO_DB = get_db_path()
+logger = logging.getLogger(__name__)
 ESCALATION_TIMEOUT_HOURS = int(os.environ.get("ESCALATION_TIMEOUT_HOURS", 72))
 
 

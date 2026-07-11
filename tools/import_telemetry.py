@@ -2,6 +2,7 @@
 """Import .swarm/telemetry.jsonl into Djitimflo loop_runs, loop_events, and loop_checkpoints."""
 
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -10,56 +11,16 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-DJITIMFLO_DB = os.environ.get(
-    "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
-)
-REPO_ROOT = Path(__file__).parent.parent
+from config import REPO_ROOT, db_connection, ensure_schema, get_db_path
+
+DJITIMFLO_DB = get_db_path()
+logger = logging.getLogger(__name__)
 TELEMETRY_FILE = REPO_ROOT / ".swarm" / "telemetry.jsonl"
 
 
 def ensure_tables(conn: sqlite3.Connection):
     """Ensure telemetry tables exist."""
-    statements = [
-        """CREATE TABLE IF NOT EXISTS loop_runs (
-            id TEXT PRIMARY KEY,
-            goal_id TEXT,
-            loop_name TEXT NOT NULL,
-            mode TEXT NOT NULL,
-            status TEXT NOT NULL,
-            repository_path TEXT,
-            state_file TEXT,
-            findings_json TEXT DEFAULT '[]',
-            plan_json TEXT DEFAULT '{}',
-            gates_json TEXT DEFAULT '[]',
-            next_actions_json TEXT DEFAULT '[]',
-            metadata TEXT DEFAULT '{}',
-            created_at TEXT,
-            updated_at TEXT,
-            completed_at TEXT
-        )""",
-        """CREATE TABLE IF NOT EXISTS loop_events (
-            id TEXT PRIMARY KEY,
-            loop_run_id TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            level TEXT,
-            message TEXT NOT NULL,
-            metadata TEXT DEFAULT '{}',
-            created_at TEXT
-        )""",
-        """CREATE TABLE IF NOT EXISTS loop_checkpoints (
-            id TEXT PRIMARY KEY,
-            loop_run_id TEXT NOT NULL,
-            label TEXT NOT NULL,
-            state_json TEXT DEFAULT '{}',
-            gates_json TEXT DEFAULT '[]',
-            findings_json TEXT DEFAULT '[]',
-            leases_json TEXT DEFAULT '[]',
-            metadata TEXT DEFAULT '{}',
-            created_at TEXT
-        )""",
-    ]
-    for stmt in statements:
-        conn.execute(stmt)
+    ensure_schema(conn)
 
 
 def import_telemetry(conn: sqlite3.Connection, telemetry_path: Path) -> dict:

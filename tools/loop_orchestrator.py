@@ -13,6 +13,7 @@ Phases 1-5 run fully autonomously. Phase 6 is the only human gate.
 """
 
 import json
+import logging
 import os
 import sqlite3
 import subprocess
@@ -20,12 +21,11 @@ import sys
 import time
 import uuid
 from datetime import datetime, timedelta
-from pathlib import Path
 
-DJITIMFLO_DB = os.environ.get(
-    "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
-)
-REPO_ROOT = Path(__file__).parent.parent
+from config import REPO_ROOT, db_connection, ensure_schema, get_db_path
+
+DJITIMFLO_DB = get_db_path()
+logger = logging.getLogger(__name__)
 PHASE_TIMEOUT = int(os.environ.get("LOOP_PHASE_TIMEOUT", 1800))  # 30 min default
 GLOBAL_TIMEOUT = int(os.environ.get("LOOP_GLOBAL_TIMEOUT", 14400))  # 4 hours default
 MAX_RETRIES = 3
@@ -74,40 +74,7 @@ class Orchestrator:
 
     def _ensure_tables(self):
         """Ensure all required tables exist."""
-        for stmt in [
-            """CREATE TABLE IF NOT EXISTS loop_runs (
-                id TEXT PRIMARY KEY, goal_id TEXT, loop_name TEXT NOT NULL,
-                mode TEXT NOT NULL, status TEXT NOT NULL, repository_path TEXT,
-                state_file TEXT, findings_json TEXT DEFAULT '[]',
-                plan_json TEXT DEFAULT '{}', gates_json TEXT DEFAULT '[]',
-                next_actions_json TEXT DEFAULT '[]', metadata TEXT DEFAULT '{}',
-                created_at TEXT, updated_at TEXT, completed_at TEXT
-            )""",
-            """CREATE TABLE IF NOT EXISTS loop_events (
-                id TEXT PRIMARY KEY, loop_run_id TEXT NOT NULL,
-                event_type TEXT NOT NULL, level TEXT, message TEXT NOT NULL,
-                metadata TEXT DEFAULT '{}', created_at TEXT
-            )""",
-            """CREATE TABLE IF NOT EXISTS loop_checkpoints (
-                id TEXT PRIMARY KEY, loop_run_id TEXT NOT NULL,
-                label TEXT NOT NULL, state_json TEXT DEFAULT '{}',
-                gates_json TEXT DEFAULT '[]', findings_json TEXT DEFAULT '[]',
-                leases_json TEXT DEFAULT '[]', metadata TEXT DEFAULT '{}',
-                created_at TEXT
-            )""",
-            """CREATE TABLE IF NOT EXISTS governance_events (
-                id TEXT PRIMARY KEY, agent_id TEXT, session_id TEXT,
-                action_type TEXT NOT NULL, tool_name TEXT,
-                risk_level TEXT DEFAULT 'low', metadata_json TEXT DEFAULT '{}',
-                policy_violations_json TEXT DEFAULT '[]', created_at TEXT
-            )""",
-            """CREATE TABLE IF NOT EXISTS governance_circuit_breaker (
-                agent_id TEXT PRIMARY KEY, failures INTEGER DEFAULT 0,
-                tripped INTEGER DEFAULT 0, last_failure_at TEXT,
-                updated_at TEXT
-            )""",
-        ]:
-            self.conn.execute(stmt)
+        ensure_schema(self.conn)
 
     def _log_event(self, event_type: str, message: str, level: str = "info"):
         """Log event to loop_events."""

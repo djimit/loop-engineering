@@ -7,6 +7,7 @@ and inserts them into the Djitimflo SQLite database.
 """
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -15,10 +16,10 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-DJITIMFLO_DB = os.environ.get(
-    "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
-)
-REPO_ROOT = Path(__file__).parent.parent
+from config import REPO_ROOT, db_connection, ensure_schema, get_db_path
+
+DJITIMFLO_DB = get_db_path()
+logger = logging.getLogger(__name__)
 CONSTRAINTS_FILE = REPO_ROOT / "loop-constraints.md"
 TOKEN_CONFIG_FILE = REPO_ROOT / "tools" / "capability_config.json"
 
@@ -84,69 +85,7 @@ def parse_constraints(md_path: Path) -> list[dict]:
 
 def ensure_tables(conn: sqlite3.Connection):
     """Ensure required tables exist with correct schema."""
-    statements = [
-        """CREATE TABLE IF NOT EXISTS governance_policies (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            rules_json TEXT DEFAULT '[]',
-            enabled INTEGER DEFAULT 1,
-            created_at TEXT
-        )""",
-        """CREATE TABLE IF NOT EXISTS capability_tokens (
-            id TEXT PRIMARY KEY,
-            token_ref TEXT NOT NULL,
-            subject_agent_id TEXT,
-            scopes_json TEXT DEFAULT '[]',
-            allowed_actions_json TEXT DEFAULT '[]',
-            denied_actions_json TEXT DEFAULT '[]',
-            risk_class TEXT,
-            status TEXT DEFAULT 'active',
-            approved_by TEXT,
-            expires_at TEXT,
-            metadata TEXT DEFAULT '{}',
-            created_at TEXT,
-            updated_at TEXT
-        )""",
-        """CREATE TABLE IF NOT EXISTS governance_events (
-            id TEXT PRIMARY KEY,
-            agent_id TEXT,
-            session_id TEXT,
-            action_type TEXT NOT NULL,
-            tool_name TEXT,
-            risk_level TEXT DEFAULT 'low',
-            metadata_json TEXT DEFAULT '{}',
-            policy_violations_json TEXT DEFAULT '[]',
-            created_at TEXT
-        )""",
-        """CREATE TABLE IF NOT EXISTS token_usage_log (
-            id TEXT PRIMARY KEY,
-            token_id TEXT NOT NULL,
-            action_type TEXT NOT NULL,
-            tokens_consumed INTEGER DEFAULT 0,
-            metadata TEXT DEFAULT '{}',
-            created_at TEXT
-        )""",
-        """CREATE TABLE IF NOT EXISTS governance_circuit_breaker (
-            id TEXT PRIMARY KEY,
-            policy_id TEXT,
-            trip_reason TEXT NOT NULL,
-            severity TEXT DEFAULT 'medium',
-            resolved INTEGER DEFAULT 0,
-            created_at TEXT
-        )""",
-        """CREATE TABLE IF NOT EXISTS policy_violations (
-            id TEXT PRIMARY KEY,
-            policy_id TEXT NOT NULL,
-            violation_type TEXT NOT NULL,
-            details TEXT DEFAULT '',
-            severity TEXT DEFAULT 'medium',
-            resolved INTEGER DEFAULT 0,
-            created_at TEXT
-        )""",
-    ]
-    for stmt in statements:
-        conn.execute(stmt)
+    ensure_schema(conn)
 
 
 def seed_policies(conn: sqlite3.Connection, constraints: list[dict]) -> int:
