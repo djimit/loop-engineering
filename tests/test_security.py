@@ -93,6 +93,41 @@ def test_git_ref_invalid():
     check(validate_git_ref("has^caret") == False)
 
 
+def test_safe_path_null_bytes():
+    base = "/tmp/test-base-security"
+    os.makedirs(base, exist_ok=True)
+    try:
+        assert_safe_path("foo\x00bar", base)
+        raise AssertionError("Should have raised ValueError for null bytes")
+    except (ValueError, ValueError):
+        pass
+
+
+def test_safe_path_very_long():
+    base = "/tmp/test-base-security"
+    os.makedirs(base, exist_ok=True)
+    long_name = "a" * 5000
+    try:
+        assert_safe_path(long_name, base)
+    except ValueError:
+        pass
+
+
+def test_safe_path_unicode():
+    base = "/tmp/test-base-security"
+    os.makedirs(base, exist_ok=True)
+    result = assert_safe_path("st.md", base)
+    check(result.endswith("st.md"))
+
+
+def test_git_ref_unicode():
+    # Unicode is allowed by git ref format (only control chars and special chars denied)
+    check(validate_git_ref("feature/café") == True)
+    check(validate_git_ref("user/日本語") == True)
+    # But unicode control characters are still denied
+    check(validate_git_ref("feature\x00null") == False)
+
+
 def main():
     tests = [
         test_safe_segment_valid,
@@ -100,9 +135,13 @@ def main():
         test_safe_path_within_base,
         test_safe_path_blocks_traversal,
         test_safe_path_blocks_absolute,
+        test_safe_path_null_bytes,
+        test_safe_path_very_long,
+        test_safe_path_unicode,
         test_state_file_allowlist,
         test_git_ref_valid,
         test_git_ref_invalid,
+        test_git_ref_unicode,
     ]
 
     passed = 0

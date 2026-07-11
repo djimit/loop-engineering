@@ -13,6 +13,44 @@ Agent-loop governance reference implementation for the Djimit ecosystem.
 5. **Secure** — Prompt-injection gate + security validation
 6. **Escalate** — Human escalation gateway (only human interaction point)
 
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOOP_DB_PATH` | `~/djimitflo/.data/djimitflo.sqlite` | SQLite database path for all tools |
+| `LOOP_PHASE_TIMEOUT` | `1800` (30 min) | Per-phase timeout in seconds |
+| `LOOP_GLOBAL_TIMEOUT` | `14400` (4 hours) | Global orchestrator timeout in seconds |
+| `ESCALATION_TIMEOUT_HOURS` | `72` | Hours before escalation auto-rejects |
+
+### Configuration Module
+
+`tools/config.py` provides shared configuration:
+
+```python
+from config import get_db_path, REPO_ROOT, db_connection, ensure_schema
+
+# Get database path (respects LOOP_DB_PATH env var)
+db_path = get_db_path()
+
+# Use context manager for auto-commit/rollback
+with db_connection() as conn:
+    ensure_schema(conn)
+    # ... use conn ...
+```
+
+### Logging
+
+All tools use Python's `logging` module. Configure via:
+
+```python
+from config import configure_logging
+configure_logging("DEBUG")  # or INFO, WARNING, ERROR
+```
+
+Log output goes to stderr with format: `timestamp [LEVEL] name: message`
+
 ## Usage
 
 ```bash
@@ -29,10 +67,14 @@ python3 tools/seed_governance.py
 # Import telemetry
 python3 tools/import_telemetry.py
 
-# Run all tests
+# Run integration tests
 python3 tests/test_integration.py
 python3 tests/test_security.py
 python3 tests/prompt_injection/test_injection.py
+
+# Run unit tests (fast, no subprocess)
+python3 tests/test_qa_gates.py
+python3 tests/test_seed_governance.py
 ```
 
 ## Components
