@@ -10,12 +10,14 @@ import os
 import re
 import sqlite3
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 
-DJITIMFLO_DB = os.environ.get(
-    "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
-)
+_db_fd, _db_path = tempfile.mkstemp(suffix=".sqlite", prefix="loop_inject_")
+os.close(_db_fd)
+os.environ.setdefault("LOOP_DB_PATH", _db_path)
+DJITIMFLO_DB = os.environ["LOOP_DB_PATH"]
 
 # Injection patterns — deterministic detection
 INJECTION_PATTERNS = {

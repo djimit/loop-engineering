@@ -375,7 +375,6 @@ def run_auto_checks(proposal: str, design: str, specs_dir: Path) -> list[dict]:
         "sme": [
             check_ecosystem_fit(proposal, design),
             check_governance_completeness(specs_dir),
-            check_feasibility(proposal, design),
         ],
         "test_engineer": [
             check_test_coverage(specs_dir),

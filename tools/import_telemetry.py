@@ -115,7 +115,7 @@ def import_telemetry(conn: sqlite3.Connection, telemetry_path: Path) -> dict:
                     (
                         run_id,
                         str(REPO_ROOT),
-                        json.dumps({"correlation_id": correlation_id}),
+                        json.dumps({"correlation_id": correlation_id, "orphan": True}),
                         timestamp,
                     ),
                 )
