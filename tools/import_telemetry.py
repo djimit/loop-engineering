@@ -82,80 +82,81 @@ def import_telemetry(conn: sqlite3.Connection, telemetry_path: Path) -> dict:
                 stats["skipped"] += 1
                 continue
 
-            event = entry.get("event", "")
-            session_id = entry.get("sessionId", "")
-            agent_name = entry.get("agentName", "")
-            timestamp = entry.get("timestamp", datetime.now().isoformat())
-
-            # Create a loop_run per session
-            if event == "session_started":
-                run_id = str(uuid.uuid4())
-                conn.execute(
-                    """INSERT OR IGNORE INTO loop_runs
-                       (id, loop_name, mode, status, repository_path, metadata, created_at)
-                       VALUES (?, ?, 'L1', 'running', ?, ?, ?)""",
-                    (
-                        run_id,
-                        agent_name,
-                        str(REPO_ROOT),
-                        json.dumps(
-                            {"session_id": session_id, "correlation_id": correlation_id}
-                        ),
-                        timestamp,
-                    ),
-                )
-                stats["runs_created"] += 1
-
-            if run_id is None:
-                run_id = str(uuid.uuid4())
-                conn.execute(
-                    """INSERT OR IGNORE INTO loop_runs
-                       (id, loop_name, mode, status, repository_path, metadata, created_at)
-                       VALUES (?, 'unknown', 'L1', 'running', ?, ?, ?)""",
-                    (
-                        run_id,
-                        str(REPO_ROOT),
-                        json.dumps({"correlation_id": correlation_id}),
-                        timestamp,
-                    ),
-                )
-                stats["runs_created"] += 1
-
-            # Create loop_event
-            conn.execute(
-                """INSERT INTO loop_events (id, loop_run_id, event_type, level, message, metadata, created_at)
-                   VALUES (?, ?, ?, 'info', ?, ?, ?)""",
-                (
-                    str(uuid.uuid4()),
-                    run_id,
-                    event,
-                    f"{agent_name}: {event}",
-                    json.dumps(
-                        {"session_id": session_id, "correlation_id": correlation_id}
-                    ),
-                    timestamp,
-                ),
-            )
-
-            # Create checkpoint on agent transitions
-            if event == "agent_activated":
-                conn.execute(
-                    """INSERT INTO loop_checkpoints
-                       (id, loop_run_id, label, state_json, gates_json, findings_json, metadata, created_at)
-                       VALUES (?, ?, ?, ?, '[]', '[]', ?, ?)""",
-                    (
-                        str(uuid.uuid4()),
-                        run_id,
-                        f"agent_{agent_name}",
-                        json.dumps({"agent": agent_name, "session_id": session_id}),
-                        json.dumps({"correlation_id": correlation_id}),
-                        timestamp,
-                    ),
-                )
-
-            stats["imported"] += 1
+            imported, run_id = _import_entry(conn, entry, run_id, correlation_id)
+            stats["imported"] += imported
 
     return stats
+
+
+def _import_entry(
+    conn: sqlite3.Connection, entry: dict, run_id: str | None, correlation_id: str
+) -> tuple[int, str | None]:
+    """Import a single telemetry entry. Returns (imported_count, run_id)."""
+    event = entry.get("event", "")
+    session_id = entry.get("sessionId", "")
+    agent_name = entry.get("agentName", "")
+    timestamp = entry.get("timestamp", datetime.now().isoformat())
+
+    if event == "session_started":
+        run_id = str(uuid.uuid4())
+        conn.execute(
+            """INSERT OR IGNORE INTO loop_runs
+               (id, loop_name, mode, status, repository_path, metadata, created_at)
+               VALUES (?, ?, 'L1', 'running', ?, ?, ?)""",
+            (
+                run_id,
+                agent_name,
+                str(REPO_ROOT),
+                json.dumps(
+                    {"session_id": session_id, "correlation_id": correlation_id}
+                ),
+                timestamp,
+            ),
+        )
+
+    if run_id is None:
+        run_id = str(uuid.uuid4())
+        conn.execute(
+            """INSERT OR IGNORE INTO loop_runs
+               (id, loop_name, mode, status, repository_path, metadata, created_at)
+               VALUES (?, 'unknown', 'L1', 'running', ?, ?, ?)""",
+            (
+                run_id,
+                str(REPO_ROOT),
+                json.dumps({"correlation_id": correlation_id}),
+                timestamp,
+            ),
+        )
+
+    conn.execute(
+        """INSERT INTO loop_events (id, loop_run_id, event_type, level, message, metadata, created_at)
+           VALUES (?, ?, ?, 'info', ?, ?, ?)""",
+        (
+            str(uuid.uuid4()),
+            run_id,
+            event,
+            f"{agent_name}: {event}",
+            json.dumps({"session_id": session_id, "correlation_id": correlation_id}),
+            timestamp,
+        ),
+    )
+
+    if event == "agent_activated":
+        conn.execute(
+            """INSERT INTO loop_checkpoints
+               (id, loop_run_id, label, state_json, gates_json, findings_json, metadata, created_at)
+               VALUES (?, ?, ?, ?, '[]', '[]', ?, ?)""",
+            (
+                str(uuid.uuid4()),
+                run_id,
+                f"agent_{agent_name}",
+                json.dumps({"agent": agent_name, "session_id": session_id}),
+                json.dumps({"correlation_id": correlation_id}),
+                timestamp,
+            ),
+        )
+
+    return 1, run_id
 
 
 def watch_mode(conn: sqlite3.Connection, telemetry_path: Path, interval: float = 5.0):
@@ -170,17 +171,19 @@ def watch_mode(conn: sqlite3.Connection, telemetry_path: Path, interval: float =
                 continue
             current_size = telemetry_path.stat().st_size
             if current_size > last_size:
-                with open(telemetry_file) as f:
+                with open(telemetry_path) as f:
                     f.seek(last_size)
                     new_lines = f.readlines()
-                    # Process new lines...
                     for line in new_lines:
                         line = line.strip()
                         if line:
-                            stats = import_telemetry(conn, telemetry_path)
-                            if stats["imported"] > 0:
-                                print(f"Imported {stats['imported']} new entries")
+                            try:
+                                entry = json.loads(line)
+                                _import_entry(conn, entry)
+                            except json.JSONDecodeError:
+                                pass
                 last_size = current_size
+                conn.commit()
     except KeyboardInterrupt:
         print("Watch mode stopped")
 

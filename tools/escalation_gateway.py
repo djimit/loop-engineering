@@ -42,7 +42,7 @@ def generate_summary(run_id: str) -> dict:
     ).fetchall()
 
     violations = conn.execute(
-        "SELECT action_type, description, risk_level FROM policy_violations WHERE status != 'resolved'",
+        "SELECT violation_type, details, severity FROM policy_violations WHERE resolved = 0",
     ).fetchall()
 
     conn.close()

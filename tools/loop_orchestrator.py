@@ -230,11 +230,29 @@ class Orchestrator:
                         "circuit_breaker_escalation",
                         f"Phase {phase} failed {MAX_RETRIES} times, escalating to human",
                     )
-                    # Skip remaining phases and go to escalation
+                    # Skip remaining non-escalate phases
                     for remaining in PHASES[PHASES.index(phase) + 1 :]:
                         if remaining != "escalate":
                             self.phase_status[remaining] = "skipped"
                     break
+
+        # Always run escalation if any non-escalate phase failed
+        if any(self.phase_status.get(p) == "failed" for p in PHASES if p != "escalate"):
+            if self.phase_status.get("escalate") != "completed":
+                self.current_phase = "escalate"
+                self._log_event(
+                    "phase_start", "Starting phase: escalate (post-failure)"
+                )
+                result = self._phase_escalate()
+                self.phase_status["escalate"] = (
+                    "completed" if result["success"] else "failed"
+                )
+                self._checkpoint(
+                    "escalate_complete",
+                    {"success": result["success"], "tokens_used": self.token_usage},
+                    result.get("gates", []),
+                    result.get("findings", []),
+                )
 
         # Finalize — map to valid status values
         raw_status = (
@@ -373,8 +391,12 @@ class Orchestrator:
         """Phase 2: Seed governance policies and capability tokens."""
         self._add_token_usage(2000)
 
-        result = os.system(f"python3 {REPO_ROOT / 'tools' / 'seed_governance.py'}")
-        if result != 0:
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools" / "seed_governance.py")],
+            capture_output=True,
+            timeout=PHASE_TIMEOUT,
+        )
+        if result.returncode != 0:
             return {"success": False, "findings": ["Governance seeding failed"]}
 
         # Verify seeding
@@ -417,8 +439,12 @@ class Orchestrator:
         """Phase 4: Import telemetry and verify observability."""
         self._add_token_usage(3000)
 
-        result = os.system(f"python3 {REPO_ROOT / 'tools' / 'import_telemetry.py'}")
-        if result != 0:
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools" / "import_telemetry.py")],
+            capture_output=True,
+            timeout=PHASE_TIMEOUT,
+        )
+        if result.returncode != 0:
             return {"success": False, "findings": ["Telemetry import failed"]}
 
         # Verify loop_runs populated
@@ -439,10 +465,15 @@ class Orchestrator:
         self._add_token_usage(5000)
 
         # Run prompt injection tests
-        result = os.system(
-            f"python3 {REPO_ROOT / 'tests' / 'prompt_injection' / 'test_injection.py'}"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "tests" / "prompt_injection" / "test_injection.py"),
+            ],
+            capture_output=True,
+            timeout=PHASE_TIMEOUT,
         )
-        if result != 0:
+        if result.returncode != 0:
             return {
                 "success": False,
                 "findings": [
@@ -451,8 +482,12 @@ class Orchestrator:
             }
 
         # Run security tests
-        result = os.system(f"python3 {REPO_ROOT / 'tests' / 'test_security.py'}")
-        if result != 0:
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tests" / "test_security.py")],
+            capture_output=True,
+            timeout=PHASE_TIMEOUT,
+        )
+        if result.returncode != 0:
             return {"success": False, "findings": ["Security tests failed"]}
 
         gates = [

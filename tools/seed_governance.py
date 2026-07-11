@@ -128,12 +128,11 @@ def ensure_tables(conn: sqlite3.Connection):
             created_at TEXT
         )""",
         """CREATE TABLE IF NOT EXISTS governance_circuit_breaker (
-            id TEXT PRIMARY KEY,
-            policy_id TEXT,
-            trip_reason TEXT NOT NULL,
-            severity TEXT DEFAULT 'medium',
-            resolved INTEGER DEFAULT 0,
-            created_at TEXT
+            agent_id TEXT PRIMARY KEY,
+            failures INTEGER DEFAULT 0,
+            tripped INTEGER DEFAULT 0,
+            last_failure_at TEXT,
+            updated_at TEXT
         )""",
         """CREATE TABLE IF NOT EXISTS policy_violations (
             id TEXT PRIMARY KEY,
