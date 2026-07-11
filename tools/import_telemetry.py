@@ -10,7 +10,9 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-DJITIMFLO_DB = os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+DJITIMFLO_DB = os.environ.get(
+    "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+)
 REPO_ROOT = Path(__file__).parent.parent
 TELEMETRY_FILE = REPO_ROOT / ".swarm" / "telemetry.jsonl"
 

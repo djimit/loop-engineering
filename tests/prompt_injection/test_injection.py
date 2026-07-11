@@ -13,7 +13,9 @@ import sys
 import uuid
 from pathlib import Path
 
-DJITIMFLO_DB = os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+DJITIMFLO_DB = os.environ.get(
+    "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+)
 
 # Injection patterns — deterministic detection
 INJECTION_PATTERNS = {

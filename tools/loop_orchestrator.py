@@ -22,7 +22,9 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-DJITIMFLO_DB = os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+DJITIMFLO_DB = os.environ.get(
+    "LOOP_DB_PATH", os.path.expanduser("~/djimitflo/.data/djimitflo.sqlite")
+)
 REPO_ROOT = Path(__file__).parent.parent
 PHASE_TIMEOUT = int(os.environ.get("LOOP_PHASE_TIMEOUT", 1800))  # 30 min default
 GLOBAL_TIMEOUT = int(os.environ.get("LOOP_GLOBAL_TIMEOUT", 14400))  # 4 hours default
