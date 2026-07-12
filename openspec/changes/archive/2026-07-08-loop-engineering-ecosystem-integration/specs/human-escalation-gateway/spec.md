@@ -31,7 +31,7 @@ The gateway SHALL present the user with clear approve/reject/modify options.
 
 #### Scenario: User requests modification
 - **WHEN** the user selects "modify"
-- **THEN** the gateway captures the modification request and routes back to the appropriate phase
+- **THEN** the gateway captures the immutable modification request for the next governed run
 
 ### Requirement: Audit trail for human decisions
 The gateway SHALL log all human decisions to governance_events with full context.
@@ -44,5 +44,5 @@ The gateway SHALL log all human decisions to governance_events with full context
 The gateway SHALL enforce a configurable timeout for human response (default: 72 hours).
 
 #### Scenario: Timeout triggers default action
-- **WHEN** no human response is received within the timeout period
-- **THEN** the gateway applies the configured default action (reject or escalate-to-admin)
+- **WHEN** an expired pending decision is next evaluated
+- **THEN** the gateway records a system rejection and trips the run circuit breaker

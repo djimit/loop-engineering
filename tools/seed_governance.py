@@ -8,7 +8,6 @@ and inserts them into the Djitimflo SQLite database.
 
 import json
 import logging
-import os
 import re
 import sqlite3
 import sys
@@ -16,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from config import REPO_ROOT, db_connection, ensure_schema, get_db_path
+from config import REPO_ROOT, ensure_schema, get_db_path
 
 DJITIMFLO_DB = get_db_path()
 logger = logging.getLogger(__name__)
@@ -135,7 +134,7 @@ def seed_capability_tokens(conn: sqlite3.Connection) -> int:
     """Insert L1/L2/L3 capability tokens. Returns count of new tokens."""
     config_path = TOKEN_CONFIG_FILE
     if not config_path.exists():
-        print(f"Warning: {config_path} not found, skipping capability token seeding")
+        logger.warning("%s not found, skipping capability token seeding", config_path)
         return 0
 
     config = json.loads(config_path.read_text())
@@ -208,8 +207,11 @@ def detect_drift(conn: sqlite3.Connection, workflows_dir: Path) -> list[dict]:
                     }
                 )
                 conn.execute(
-                    """INSERT INTO policy_violations (id, policy_id, violation_type, details, severity)
-                       VALUES (?, 'no-auto-merge-main', 'constraint_drift', ?, 'high')""",
+                    """INSERT INTO policy_violations
+                       (id, policy_id, action_type, risk_level, status,
+                        description, metadata)
+                       VALUES (?, 'no-auto-merge-main', 'constraint_drift',
+                               'high', 'open', ?, '{}')""",
                     (str(uuid.uuid4()), f"{wf_file}: auto-merge found"),
                 )
 
@@ -218,7 +220,7 @@ def detect_drift(conn: sqlite3.Connection, workflows_dir: Path) -> list[dict]:
 
 def main():
     constraints = parse_constraints(CONSTRAINTS_FILE)
-    print(f"Parsed {len(constraints)} constraints from {CONSTRAINTS_FILE}")
+    logger.info("Parsed %d constraints from %s", len(constraints), CONSTRAINTS_FILE)
 
     conn = sqlite3.connect(DJITIMFLO_DB)
     ensure_tables(conn)

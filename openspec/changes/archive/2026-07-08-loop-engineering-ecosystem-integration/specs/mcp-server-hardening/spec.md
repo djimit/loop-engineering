@@ -29,15 +29,15 @@ The MCP server SHALL validate that resolved resource paths remain within the exp
 - **WHEN** a symlink or relative path resolves outside the allowed base directory
 - **THEN** the server denies access and logs a security event
 
-### Requirement: Capability token validation per tool call
-The MCP server SHALL validate the caller's capability token scopes before executing any tool.
+### Requirement: Capability token validation before governed execution
+The orchestrator SHALL validate the active capability token scope before executing a governed phase.
 
 #### Scenario: Insufficient scope
 - **WHEN** a tool call requires "write" scope but the token only has "read"
 - **THEN** the server returns a permission denied error
 
-### Requirement: MCP call audit logging
-The MCP server SHALL log every tool call to governance_events with actor identity, tool name, and outcome.
+### Requirement: Governed action audit logging
+The orchestrator SHALL log governed actions to governance_events with actor identity, action, and outcome.
 
 #### Scenario: Successful tool call logged
 - **WHEN** a tool call completes successfully

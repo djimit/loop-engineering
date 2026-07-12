@@ -12,11 +12,12 @@ import sqlite3
 import sys
 import tempfile
 import uuid
-from pathlib import Path
 
-_db_fd, _db_path = tempfile.mkstemp(suffix=".sqlite", prefix="loop_inject_")
-os.close(_db_fd)
-os.environ.setdefault("LOOP_DB_PATH", _db_path)
+_owns_db = "LOOP_DB_PATH" not in os.environ
+if _owns_db:
+    _db_fd, _db_path = tempfile.mkstemp(suffix=".sqlite", prefix="loop_inject_")
+    os.close(_db_fd)
+    os.environ["LOOP_DB_PATH"] = _db_path
 DJITIMFLO_DB = os.environ["LOOP_DB_PATH"]
 
 # Injection patterns — deterministic detection
@@ -170,27 +171,32 @@ def run_all_tests() -> dict:
 
 
 def main():
-    results = run_all_tests()
+    try:
+        results = run_all_tests()
 
-    print(
-        f"Prompt Injection Gate: {results['passed']}/{results['passed'] + results['failed']} passed"
-    )
-    for t in results["tests"]:
-        status = "PASS" if t["result"] == "PASS" else "FAIL"
-        print(f"  [{status}] {t['name']}")
-        if "error" in t:
-            print(f"         {t['error']}")
-
-    # Log failures to Djitimflo
-    if results["failed"] > 0:
-        conn = sqlite3.connect(DJITIMFLO_DB)
+        print(
+            f"Prompt Injection Gate: {results['passed']}/"
+            f"{results['passed'] + results['failed']} passed"
+        )
         for t in results["tests"]:
-            if t["result"] == "FAIL":
-                log_injection_attempt(conn, t["name"], "test_suite")
-        conn.commit()
-        conn.close()
+            status = "PASS" if t["result"] == "PASS" else "FAIL"
+            print(f"  [{status}] {t['name']}")
+            if "error" in t:
+                print(f"         {t['error']}")
 
-    return 0 if results["failed"] == 0 else 1
+        # Log failures to Djitimflo
+        if results["failed"] > 0:
+            conn = sqlite3.connect(DJITIMFLO_DB)
+            for t in results["tests"]:
+                if t["result"] == "FAIL":
+                    log_injection_attempt(conn, t["name"], "test_suite")
+            conn.commit()
+            conn.close()
+
+        return 0 if results["failed"] == 0 else 1
+    finally:
+        if _owns_db and os.path.exists(DJITIMFLO_DB):
+            os.unlink(DJITIMFLO_DB)
 
 
 if __name__ == "__main__":

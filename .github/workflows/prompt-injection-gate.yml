@@ -11,22 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Run prompt injection tests
-        run: python3 tests/prompt_injection/test_injection.py
-
-      - name: Run governance seeding validation
-        run: python3 tools/seed_governance.py
-        env:
-          LOOP_DB_PATH: /tmp/loop_ci.sqlite
-
-      - name: Run telemetry import validation
-        run: python3 tools/import_telemetry.py
-        env:
-          LOOP_DB_PATH: /tmp/loop_ci.sqlite
+      - name: Run complete governance test suite
+        run: python3 tests/run_qa_tests.py
 
       - name: Security — check for hardcoded secrets
         run: |
