@@ -74,13 +74,28 @@ The integration gap: OpenMythos defines WHAT should be governed, loop-engineerin
 
 **Rationale:** Concentrating human interaction at the end respects the governance model (validate everything, then present a complete picture for decision) while enabling full autonomy during execution.
 
+## Data Flow
+
+1. Archived OpenSpec proposal, design, and specs enter deterministic QA validation.
+2. `loop-constraints.md` and `capability_config.json` seed the shared SQLite governance records.
+3. The orchestrator validates the selected capability token and budget, then records token usage with the run `correlation_id`.
+4. JSONL telemetry becomes idempotent `loop_runs`, `loop_events`, and `loop_checkpoints`; every record carries a correlation ID.
+5. Security gates and policy findings are checkpointed before one pending human escalation is created.
+6. Approve, reject, or modify is recorded once as the final audited decision.
+
+## Operations, Ownership, and Coupling
+
+The loop-engineering maintainer owns this reference implementation and its SQLite contract. Downstream OpenMythos, Djitimflo, and MCP deployments remain independently owned; this repository writes only through the documented tables and does not import their application code. That narrow database boundary limits cross-system coupling and lets a consumer remove the integration by stopping the orchestrator without migrating product state.
+
+Every autonomous phase propagates the same `correlation_id`. Per-phase and global timeout enforcement prevents a stalled dependency from blocking the final human gate. The polling telemetry watcher and final decision timeout require an invoking process; no scheduler or daemon is introduced in this reference implementation.
+
 ## Risks / Trade-offs
 
 | Risk | Mitigation |
 |---|---|
-| Djitimflo schema mismatch between expected and actual | Schema is read at runtime; migration script checks column existence before INSERT |
+| Djitimflo schema mismatch between expected and actual | Runtime and tests share the same idempotent `ensure_schema` definition |
 | OpenMythos QA gates may reject valid plans | Critic/reviewer operate on plan documents, not code; plans can be iterated |
 | Prompt-injection test false positives | Tests use deterministic pattern matching, not LLM evaluation |
 | Orchestrator state machine gets stuck | Per-phase timeout (default 30 min) + global timeout (default 4 hours) |
 | MCP server hardening breaks legitimate tool calls | Allowlist approach — only block known-dangerous paths, log all denials for review |
-| Human escalation timeout causes stale approvals | Default 72h timeout with configurable escalation-to-admin fallback |
+| Human escalation timeout causes stale approvals | Default 72h deadline; the next gateway evaluation records a system rejection |

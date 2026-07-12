@@ -1,100 +1,73 @@
 # Loop Engineering
 
-Agent-loop governance reference implementation for the Djimit ecosystem.
+Verified reference implementation for autonomous agent-loop governance in the
+Djimit ecosystem.
 
-## Architecture
+## Runtime contract
 
-6-phase autonomous orchestrator with circuit breaker:
+The orchestrator runs five phases without user input and stops at one final
+human decision gate:
 
-1. **Validate** — OpenMythos QA gates (critic, reviewer, SME, test_engineer, explorer)
-2. **Seed** — Governance policy + capability token seeding into Djitimflo
-3. **Execute** — Loop-engineering pattern execution
-4. **Observe** — Telemetry import into Djitimflo (loop_runs, loop_events, loop_checkpoints)
-5. **Secure** — Prompt-injection gate + security validation
-6. **Escalate** — Human escalation gateway (only human interaction point)
+1. **Validate** — deterministic OpenMythos plan checks
+2. **Seed** — idempotent policies and expiring capability tokens
+3. **Execute** — capability and budget authorization for the governed run
+4. **Observe** — idempotent JSONL telemetry import and phase checkpoints
+5. **Secure** — prompt-injection, path, and token-scope gates
+6. **Escalate** — persist `awaiting_human` with approve/reject/modify options
+
+Failures, budget overruns, and timeouts skip unsafe remaining work and still
+reach the final human gate. No phase performs a merge or publish operation.
 
 ## Configuration
 
-### Environment Variables
-
 | Variable | Default | Description |
 |---|---|---|
-| `LOOP_DB_PATH` | `~/djimitflo/.data/djimitflo.sqlite` | SQLite database path for all tools |
-| `LOOP_PHASE_TIMEOUT` | `1800` (30 min) | Per-phase timeout in seconds |
-| `LOOP_GLOBAL_TIMEOUT` | `14400` (4 hours) | Global orchestrator timeout in seconds |
-| `ESCALATION_TIMEOUT_HOURS` | `72` | Hours before escalation auto-rejects |
+| `LOOP_DB_PATH` | `~/djimitflo/.data/djimitflo.sqlite` | SQLite database |
+| `LOOP_PHASE_TIMEOUT` | `1800` | Maximum phase duration in seconds |
+| `LOOP_GLOBAL_TIMEOUT` | `14400` | Maximum autonomous run duration |
+| `ESCALATION_TIMEOUT_HOURS` | `72` | Pending lifetime; next gateway evaluation rejects expiry |
 
-### Configuration Module
+Mode budgets and scopes live in `tools/capability_config.json`:
 
-`tools/config.py` provides shared configuration:
+- L1: read, 10,000 tokens
+- L2: read + draft PR creation, 50,000 tokens
+- L3: read + PR/merge/publish scopes, 200,000 tokens
 
-```python
-from config import get_db_path, REPO_ROOT, db_connection, ensure_schema
-
-# Get database path (respects LOOP_DB_PATH env var)
-db_path = get_db_path()
-
-# Use context manager for auto-commit/rollback
-with db_connection() as conn:
-    ensure_schema(conn)
-    # ... use conn ...
-```
-
-### Logging
-
-All tools use Python's `logging` module. Configure via:
-
-```python
-from config import configure_logging
-configure_logging("DEBUG")  # or INFO, WARNING, ERROR
-```
-
-Log output goes to stderr with format: `timestamp [LEVEL] name: message`
+This reference pipeline itself uses only the `read` scope. Higher-risk scopes
+are seeded for downstream integrations but are never exercised here.
 
 ## Usage
 
 ```bash
-# Run full pipeline in L1 mode (report-only)
+# Run phases 1-5 and create the final pending decision
 python3 tools/loop_orchestrator.py L1
 
-# Run QA gates only
-python3 tools/qa_gates.py auto
-python3 tools/qa_gates.py dispatch
+# Inspect the latest final gate
+python3 tools/escalation_gateway.py
 
-# Seed governance policies
-python3 tools/seed_governance.py
+# Record the final human decision
+python3 tools/escalation_gateway.py RUN_ID --decision approve --reason "reviewed"
 
-# Import telemetry
-python3 tools/import_telemetry.py
+# Continuously import appended telemetry without duplicates
+python3 tools/import_telemetry.py --watch
 
-# Run integration tests
-python3 tests/test_integration.py
-python3 tests/test_security.py
-python3 tests/prompt_injection/test_injection.py
-
-# Run unit tests (fast, no subprocess)
-python3 tests/test_qa_gates.py
-python3 tests/test_seed_governance.py
+# Run the complete local verification suite
+python3 tests/run_qa_tests.py
 ```
+
+The gateway also accepts `reject` and `modify`. A decision is immutable; a
+second decision for the same run is rejected.
 
 ## Components
 
 | File | Purpose |
 |---|---|
-| `tools/loop_orchestrator.py` | 6-phase state machine with circuit breaker |
-| `tools/qa_gates.py` | 5-agent QA validation (auto + dispatch modes) |
-| `tools/seed_governance.py` | Constraint → Djitimflo policy seeding |
-| `tools/import_telemetry.py` | JSONL → Djitimflo telemetry import |
-| `tools/security.py` | Path traversal, allowlist, git ref validation |
-| `tools/escalation_gateway.py` | Human decision interface |
-| `loop-constraints.md` | 8 binding governance constraints |
+| `tools/loop_orchestrator.py` | autonomous state machine, budgets, retries |
+| `tools/qa_gates.py` | deterministic plan validation and dispatch manifests |
+| `tools/seed_governance.py` | policy and capability-token seeding |
+| `tools/import_telemetry.py` | idempotent JSONL import and polling watch mode |
+| `tools/security.py` | path, allowlist, and git-ref validation |
+| `tools/escalation_gateway.py` | final decision summary, timeout, and audit trail |
+| `loop-constraints.md` | binding governance constraints |
 
-## Ecosystem Integration
-
-```
-OpenMythos (governance rules)
-    ↓ QA gates validate plan
-Loop Engineering (execution)
-    ↓ telemetry
-Djitimflo (observability + audit)
-```
+The implementation uses only the Python standard library.

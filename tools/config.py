@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """Shared configuration for loop-engineering tools."""
 
-import logging
 import os
 import sqlite3
-import sys
-from contextlib import contextmanager
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -18,35 +15,15 @@ def get_db_path() -> str:
     )
 
 
-def configure_logging(level: str = "INFO") -> None:
-    """Configure structured logging for loop-engineering tools."""
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        stream=sys.stderr,
-    )
-
-
-@contextmanager
-def db_connection():
-    """Context manager for database connections with auto-commit/rollback."""
-    conn = sqlite3.connect(get_db_path())
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
 DDL_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS loop_runs (
         id TEXT PRIMARY KEY, goal_id TEXT, loop_name TEXT NOT NULL,
-        mode TEXT NOT NULL, status TEXT NOT NULL, repository_path TEXT,
+        mode TEXT NOT NULL CHECK(mode IN ('closed', 'open')),
+        status TEXT NOT NULL CHECK(status IN (
+            'created', 'planning', 'running', 'verifying',
+            'ready_for_human_merge', 'blocked', 'completed', 'failed',
+            'escalated', 'cancelled', 'interrupted'
+        )), repository_path TEXT,
         state_file TEXT, findings_json TEXT DEFAULT '[]',
         plan_json TEXT DEFAULT '{}', gates_json TEXT DEFAULT '[]',
         next_actions_json TEXT DEFAULT '[]', metadata TEXT DEFAULT '{}',
@@ -89,15 +66,22 @@ DDL_STATEMENTS = [
         created_at TEXT, updated_at TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS token_usage_log (
-        id TEXT PRIMARY KEY, token_id TEXT NOT NULL,
-        action_type TEXT NOT NULL, tokens_consumed INTEGER DEFAULT 0,
-        metadata TEXT DEFAULT '{}', created_at TEXT
+        id TEXT PRIMARY KEY, task_id TEXT, agent_id TEXT,
+        provider TEXT NOT NULL, model TEXT NOT NULL,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+        cost REAL NOT NULL DEFAULT 0, duration_ms INTEGER,
+        timestamp TEXT, discussion_id TEXT, task_type TEXT,
+        total_tokens INTEGER NOT NULL DEFAULT 0, cost_estimate REAL,
+        metadata TEXT DEFAULT '{}', created_at TEXT, updated_at TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS policy_violations (
-        id TEXT PRIMARY KEY, policy_id TEXT NOT NULL,
-        violation_type TEXT NOT NULL, details TEXT DEFAULT '',
-        severity TEXT DEFAULT 'medium', resolved INTEGER DEFAULT 0,
-        created_at TEXT
+        id TEXT PRIMARY KEY, task_id TEXT, execution_event_id TEXT,
+        policy_id TEXT, action_type TEXT NOT NULL, risk_level TEXT NOT NULL,
+        status TEXT NOT NULL, description TEXT NOT NULL,
+        metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT, updated_at TEXT
     )""",
 ]
 

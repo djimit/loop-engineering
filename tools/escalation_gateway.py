@@ -1,239 +1,257 @@
 #!/usr/bin/env python3
-"""Human escalation gateway — concentrated human interaction at end of pipeline.
+"""Final human decision gateway for autonomous loop runs."""
 
-Generates structured phase summary, aggregates findings, and presents
-approval interface with approve/reject/modify options.
-"""
-
+import argparse
 import json
-import logging
 import os
 import sqlite3
 import sys
 import uuid
 from datetime import datetime, timedelta
 
-from config import db_connection, get_db_path
+from config import ensure_schema, get_db_path
 
 DJITIMFLO_DB = get_db_path()
-logger = logging.getLogger(__name__)
 ESCALATION_TIMEOUT_HOURS = int(os.environ.get("ESCALATION_TIMEOUT_HOURS", 72))
+DECISIONS = {"approve", "reject", "modify"}
+
+
+def _now() -> datetime:
+    return datetime.now().astimezone()
+
+
+def _parse_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.astimezone()
+
+
+def request_escalation(conn: sqlite3.Connection, run_id: str) -> dict:
+    """Create one pending final human decision with a fixed deadline."""
+    row = conn.execute(
+        """SELECT metadata_json FROM governance_events
+           WHERE session_id=? AND action_type='human_escalation_requested'
+           ORDER BY created_at DESC LIMIT 1""",
+        (run_id,),
+    ).fetchone()
+    if row:
+        return json.loads(row[0])
+
+    requested_at = _now()
+    payload = {
+        "decision": "pending",
+        "requested_at": requested_at.isoformat(),
+        "expires_at": (
+            requested_at + timedelta(hours=ESCALATION_TIMEOUT_HOURS)
+        ).isoformat(),
+        "options": sorted(DECISIONS),
+    }
+    conn.execute(
+        """INSERT INTO governance_events
+           (id, agent_id, session_id, action_type, risk_level, metadata_json, created_at)
+           VALUES (?, 'orchestrator', ?, 'human_escalation_requested', 'high', ?, ?)""",
+        (str(uuid.uuid4()), run_id, json.dumps(payload), requested_at.isoformat()),
+    )
+    conn.execute(
+        "UPDATE loop_runs SET status='escalated', updated_at=? WHERE id=?",
+        (requested_at.isoformat(), run_id),
+    )
+    conn.commit()
+    return payload
 
 
 def generate_summary(run_id: str) -> dict:
-    """Generate structured phase summary for a loop run."""
+    """Return the persisted phase, finding, violation, and decision state."""
     conn = sqlite3.connect(DJITIMFLO_DB)
-
+    ensure_schema(conn)
     run = conn.execute(
-        "SELECT id, mode, status, created_at, completed_at FROM loop_runs WHERE id = ?",
+        """SELECT id, mode, status, created_at, completed_at, findings_json, metadata
+           FROM loop_runs WHERE id=?""",
         (run_id,),
     ).fetchone()
-
     if not run:
+        conn.close()
         return {"error": f"Run {run_id} not found"}
 
-    events = conn.execute(
-        "SELECT event_type, level, message, created_at FROM loop_events WHERE loop_run_id = ? ORDER BY created_at",
-        (run_id,),
-    ).fetchall()
-
     checkpoints = conn.execute(
-        "SELECT label, state_json, gates_json, findings_json FROM loop_checkpoints WHERE loop_run_id = ? ORDER BY created_at",
+        """SELECT label, state_json, gates_json, findings_json
+           FROM loop_checkpoints WHERE loop_run_id=? ORDER BY created_at""",
         (run_id,),
     ).fetchall()
-
     violations = conn.execute(
-        "SELECT action_type, description, risk_level FROM policy_violations WHERE status != 'resolved'",
+        """SELECT action_type, description, risk_level FROM policy_violations
+           WHERE status != 'resolved' ORDER BY created_at"""
     ).fetchall()
-
+    request = conn.execute(
+        """SELECT metadata_json FROM governance_events
+           WHERE session_id=? AND action_type='human_escalation_requested'
+           ORDER BY created_at DESC LIMIT 1""",
+        (run_id,),
+    ).fetchone()
+    decision = conn.execute(
+        """SELECT metadata_json FROM governance_events
+           WHERE session_id=? AND action_type='human_decision'
+           ORDER BY created_at DESC LIMIT 1""",
+        (run_id,),
+    ).fetchone()
+    usage_rows = conn.execute(
+        "SELECT total_tokens, metadata FROM token_usage_log"
+    ).fetchall()
     conn.close()
 
-    phase_summaries = []
-    for label, state_json, gates_json, findings_json in checkpoints:
-        phase_summaries.append(
-            {
-                "phase": label.replace("_complete", ""),
-                "state": json.loads(state_json),
-                "gates": json.loads(gates_json),
-                "findings": json.loads(findings_json),
-            }
+    phases = [
+        {
+            "phase": label.removesuffix("_complete"),
+            "state": json.loads(state_json),
+            "gates": json.loads(gates_json),
+            "findings": json.loads(findings_json),
+        }
+        for label, state_json, gates_json, findings_json in checkpoints
+    ]
+    findings = []
+    seen = set()
+    for finding in json.loads(run[5] or "[]") + [
+        item for phase in phases for item in phase["findings"]
+    ]:
+        key = finding if isinstance(finding, str) else json.dumps(finding, sort_keys=True)
+        if key not in seen:
+            seen.add(key)
+            findings.append(finding)
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    findings.sort(
+        key=lambda finding: severity_order.get(
+            finding.get("severity", "medium") if isinstance(finding, dict) else "medium",
+            2,
         )
+    )
+    token_usage = sum(
+        tokens
+        for tokens, metadata in usage_rows
+        if json.loads(metadata or "{}").get("run_id") == run_id
+    )
 
     return {
         "run_id": run[0],
-        "mode": run[1],
+        "mode": json.loads(run[6] or "{}").get("capability_mode", run[1]),
         "status": run[2],
         "created_at": run[3],
         "completed_at": run[4],
-        "total_events": len(events),
-        "phases": phase_summaries,
+        "token_usage": token_usage,
+        "phases": phases,
+        "findings": findings,
         "open_violations": [
-            {"type": v[0], "details": v[1], "severity": v[2]} for v in violations
+            {"type": kind, "details": details, "severity": severity}
+            for kind, details, severity in violations
         ],
+        "escalation": json.loads(request[0]) if request else None,
+        "decision": json.loads(decision[0]) if decision else None,
     }
 
 
-def aggregate_findings(run_id: str) -> list[dict]:
-    """Aggregate and deduplicate findings from all phases, sorted by severity."""
+def record_decision(
+    run_id: str, decision: str, reason: str = "", actor: str = "human"
+) -> dict:
+    """Validate and persist the final human decision exactly once."""
+    decision = decision.lower()
+    if decision not in DECISIONS:
+        raise ValueError(f"decision must be one of: {', '.join(sorted(DECISIONS))}")
+
     conn = sqlite3.connect(DJITIMFLO_DB)
-
-    checkpoints = conn.execute(
-        "SELECT findings_json FROM loop_checkpoints WHERE loop_run_id = ?",
+    ensure_schema(conn)
+    if not conn.execute("SELECT 1 FROM loop_runs WHERE id=?", (run_id,)).fetchone():
+        conn.close()
+        raise ValueError(f"Run {run_id} not found")
+    if conn.execute(
+        """SELECT 1 FROM governance_events
+           WHERE session_id=? AND action_type='human_decision'""",
         (run_id,),
-    ).fetchall()
+    ).fetchone():
+        conn.close()
+        raise ValueError(f"Run {run_id} already has a human decision")
 
-    events = conn.execute(
-        "SELECT message, level FROM loop_events WHERE loop_run_id = ? AND level IN ('error', 'warning')",
-        (run_id,),
-    ).fetchall()
-
+    decided_at = _now().isoformat()
+    payload = {
+        "decision": decision,
+        "reason": reason,
+        "actor": actor,
+        "decided_at": decided_at,
+    }
+    conn.execute(
+        """INSERT INTO governance_events
+           (id, agent_id, session_id, action_type, risk_level, metadata_json, created_at)
+           VALUES (?, ?, ?, 'human_decision', 'medium', ?, ?)""",
+        (str(uuid.uuid4()), actor, run_id, json.dumps(payload), decided_at),
+    )
+    status = {
+        "approve": "completed",
+        "reject": "cancelled",
+        "modify": "interrupted",
+    }[decision]
+    conn.execute(
+        "UPDATE loop_runs SET status=?, updated_at=? WHERE id=?",
+        (status, decided_at, run_id),
+    )
+    if decision == "reject":
+        conn.execute(
+            """INSERT INTO governance_circuit_breaker
+               (agent_id, failures, tripped, last_failure_at, updated_at)
+               VALUES (?, 1, 1, ?, ?)
+               ON CONFLICT(agent_id) DO UPDATE SET
+                 failures=failures+1, tripped=1,
+                 last_failure_at=excluded.last_failure_at,
+                 updated_at=excluded.updated_at""",
+            (f"run_{run_id[:8]}", decided_at, decided_at),
+        )
+    conn.commit()
     conn.close()
+    return payload
 
-    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-    findings = []
 
-    for row in checkpoints:
-        for f in json.loads(row[0]):
-            if isinstance(f, str):
-                findings.append(
-                    {"detail": f, "severity": "medium", "source": "checkpoint"}
-                )
-            elif isinstance(f, dict):
-                findings.append(f)
-
-    for msg, level in events:
-        findings.append({"detail": msg, "severity": level, "source": "event"})
-
-    # Deduplicate
-    seen = set()
-    unique = []
-    for f in findings:
-        key = f.get("detail", str(f))
-        if key not in seen:
-            seen.add(key)
-            unique.append(f)
-
-    unique.sort(key=lambda x: severity_order.get(x.get("severity", "medium"), 2))
-    return unique
+def expire_pending_decision(run_id: str, now: datetime | None = None) -> bool:
+    """Auto-reject an expired pending escalation when the gateway is evaluated."""
+    summary = generate_summary(run_id)
+    if "error" in summary or summary["decision"] or not summary["escalation"]:
+        return False
+    if (now or _now()) < _parse_datetime(summary["escalation"]["expires_at"]):
+        return False
+    record_decision(run_id, "reject", "Escalation response timeout", "system")
+    return True
 
 
 def present_approval_interface(run_id: str) -> dict:
-    """Present approval interface and return user decision."""
+    """Print and return the final non-interactive approval handoff."""
+    expire_pending_decision(run_id)
     summary = generate_summary(run_id)
-    findings = aggregate_findings(run_id)
-
-    print("=" * 60)
-    print("  HUMAN ESCALATION GATEWAY")
-    print("=" * 60)
-
-    if "error" in summary:
-        print(f"ERROR: {summary['error']}")
-        return {"decision": "error", "reason": summary["error"]}
-
-    print(f"\nRun ID: {summary['run_id']}")
-    print(f"Mode: {summary['mode']}")
-    print(f"Status: {summary['status']}")
-    print(f"Started: {summary['created_at']}")
-    print(f"Completed: {summary['completed_at']}")
-
-    print(f"\n{'─' * 40}")
-    print("PHASE SUMMARY:")
-    print(f"{'─' * 40}")
-    for phase in summary["phases"]:
-        gates_status = ", ".join(
-            f"{g.get('gate', '?')}:{g.get('status', '?')}" for g in phase["gates"]
-        )
-        print(f"  {phase['phase']}: [{gates_status}]")
-
-    if findings:
-        print(f"\n{'─' * 40}")
-        print(f"FINDINGS ({len(findings)}):")
-        print(f"{'─' * 40}")
-        for f in findings:
-            severity = f.get("severity", "medium").upper()
-            detail = f.get("detail", str(f))
-            print(f"  [{severity}] {detail}")
-
-    if summary["open_violations"]:
-        print(f"\n{'─' * 40}")
-        print(f"OPEN POLICY VIOLATIONS ({len(summary['open_violations'])}):")
-        print(f"{'─' * 40}")
-        for v in summary["open_violations"]:
-            print(f"  [{v['severity'].upper()}] {v['type']}: {v['details']}")
-
-    print(f"\n{'─' * 40}")
-    print("DECISION OPTIONS:")
-    print(f"{'─' * 40}")
-    print("  1. APPROVE  — Accept all changes and proceed")
-    print("  2. REJECT   — Reject changes with reason")
-    print("  3. MODIFY   — Request modifications and re-run")
-    print(f"\nTimeout: {ESCALATION_TIMEOUT_HOURS} hours (default: reject)")
-
-    return {
-        "decision": "pending",
-        "summary": summary,
-        "findings": findings,
-    }
+    print(json.dumps(summary, indent=2, default=str))
+    if "error" not in summary and not summary["decision"]:
+        print("\nDecision required: APPROVE / REJECT / MODIFY")
+        print(f"Deadline: {summary['escalation']['expires_at']}")
+    return summary
 
 
-def record_decision(run_id: str, decision: str, reason: str = "", actor: str = "human"):
-    """Record human decision to governance_events."""
-    conn = sqlite3.connect(DJITIMFLO_DB)
-    conn.execute(
-        """INSERT INTO governance_events (id, agent_id, session_id, action_type, risk_level, metadata_json)
-           VALUES (?, ?, ?, 'human_decision', 'medium', ?)""",
-        (
-            str(uuid.uuid4()),
-            actor,
-            run_id,
-            json.dumps({"decision": decision, "reason": reason}),
-        ),
-    )
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("run_id", nargs="?")
+    parser.add_argument("--decision", choices=sorted(DECISIONS))
+    parser.add_argument("--reason", default="")
+    args = parser.parse_args()
 
-    if decision == "reject":
-        # Trip circuit breaker for this run
-        existing = conn.execute(
-            "SELECT agent_id FROM governance_circuit_breaker WHERE agent_id = ?",
-            (f"run_{run_id[:8]}",),
-        ).fetchone()
-        if existing:
-            conn.execute(
-                """UPDATE governance_circuit_breaker
-                   SET tripped = 1, failures = failures + 1, last_failure_at = datetime('now')
-                   WHERE agent_id = ?""",
-                (f"run_{run_id[:8]}",),
-            )
-        else:
-            conn.execute(
-                """INSERT INTO governance_circuit_breaker (agent_id, failures, tripped)
-                   VALUES (?, 1, 1)""",
-                (f"run_{run_id[:8]}",),
-            )
-
-    conn.commit()
-    conn.close()
-
-
-def main():
-    run_id = sys.argv[1] if len(sys.argv) > 1 else None
+    run_id = args.run_id
     if not run_id:
-        # Find latest run
         conn = sqlite3.connect(DJITIMFLO_DB)
+        ensure_schema(conn)
         row = conn.execute(
             "SELECT id FROM loop_runs ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
         conn.close()
-        if row:
-            run_id = row[0]
-        else:
+        if not row:
             print("No loop runs found")
             return 1
+        run_id = row[0]
 
-    result = present_approval_interface(run_id)
-
-    if result["decision"] == "pending":
-        print("\nWaiting for decision... (use record_decision() to submit)")
-
+    if args.decision:
+        print(json.dumps(record_decision(run_id, args.decision, args.reason), indent=2))
+    else:
+        present_approval_interface(run_id)
     return 0
 
 

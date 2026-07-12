@@ -10,23 +10,23 @@
 
 - [x] 2.1 Define L1/L2/L3 token configurations (scopes, risk_class, budget caps) in a JSON config file
 - [x] 2.2 Extend `tools/seed_governance.py` to insert capability_tokens records for each loop mode
-- [x] 2.3 Implement token expiry logic: L3 tokens expire after 24 hours
+- [x] 2.3 Implement token expiry logic: all tokens expire within 24 hours
 - [x] 2.4 Add token usage tracking: every action logs to token_usage_log with correlation to capability_token
 
-## 3. MCP Server Hardening
+## 3. Shared Security Boundary
 
 - [x] 3.1 Copy assertSafeSegment function from loop-mcp-server into shared security module
 - [x] 3.2 Implement realpath validation: resolved paths must remain within allowed base directory
 - [x] 3.3 Create state-file allowlist: only STATE.md, LOOP.md, telemetry files are readable
-- [x] 3.4 Add capability token scope validation before each tool call execution
-- [x] 3.5 Add audit logging: every MCP tool call logged to governance_events with actor, tool, outcome
+- [x] 3.4 Add capability-token scope validation before governed execution
+- [x] 3.5 Add audit logging for governed orchestration actions and outcomes
 
 ## 4. Telemetry Pipeline
 
 - [x] 4.1 Create Python script `tools/import_telemetry.py` that reads .swarm/telemetry.jsonl and inserts into loop_runs
 - [x] 4.2 Implement per-phase event generation: phase transitions create loop_events records
 - [x] 4.3 Implement checkpoint recording: phase boundaries create loop_checkpoints with state, gates, findings
-- [x] 4.4 Add real-time watch mode using file system events (watchdog or polling fallback)
+- [x] 4.4 Add incremental polling watch mode without duplicate imports
 - [x] 4.5 Add correlation ID generation and propagation across all telemetry records
 
 ## 5. Prompt-Injection Gate
@@ -51,9 +51,9 @@
 
 - [x] 7.1 Create `tools/escalation_gateway.py` that generates structured phase summary
 - [x] 7.2 Implement findings aggregation: deduplicate and severity-sort from all phases
-- [x] 7.3 Implement approval interface with approve/reject/modify options
+- [x] 7.3 Implement non-interactive approval CLI with approve/reject/modify options
 - [x] 7.4 Add audit trail logging for human decisions to governance_events
-- [x] 7.5 Add configurable escalation timeout (default 72 hours) with admin fallback
+- [x] 7.5 Add configurable escalation timeout (default 72 hours, reject on evaluation)
 
 ## 8. Integration & Testing
 
@@ -63,3 +63,4 @@
 - [x] 8.4 Verify OpenMythos QA gates function correctly (mock critic/reviewer verdicts)
 - [x] 8.5 Verify prompt-injection gate correctly fails on adversarial input
 - [x] 8.6 Verify circuit breaker trips after max retries and triggers escalation
+- [x] 8.7 Verify telemetry idempotency, token budget enforcement, final decisions, and timeout rejection
