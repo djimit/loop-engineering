@@ -1,0 +1,22 @@
+# Loop Engineering — Code Owners
+# Multiple maintainers to mitigate bus factor risk.
+
+# Default owner for all files
+* @djimit
+
+# Security-critical paths require additional review
+/tools/security.py @djimit
+/tools/qa_gates.py @djimit
+.github/workflows/ @djimit
+
+# Governance constraints are binding — require maintainer approval
+/loop-constraints.md @djimit
+/openspec/ @djimit
+
+# Telemetry pipeline touches Djitimflo — shared ownership
+/tools/import_telemetry.py @djimit
+/tools/seed_governance.py @djimit
+
+# Escalation gateway is the human gate — most critical component
+/tools/escalation_gateway.py @djimit
+/tools/loop_orchestrator.py @djimit
