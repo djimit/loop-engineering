@@ -6,7 +6,7 @@ Loop-engineering is een bewezen reference implementation voor agent-loop governa
 
 - **Seed Djimitflo governance_policies vanuit loop-constraints.md** — Markdown constraints worden machine-readable JSON policy records met risk_class, scopes, en enforcement rules.
 - **Map loop-engineering L1/L2/L3 modes naar Djimitflo capability_tokens** — Elke loop mode wordt een capability token met gedefinieerde scopes (read, pr_create, merge, publish) en budget caps.
-- **Publiceer gedeelde security-primitives** — Path traversal beveiliging, state-file allowlisting en git-ref validatie zijn herbruikbaar aan MCP-grenzen; daadwerkelijke serverintegratie blijft buiten deze reference repo.
+- **Integreer loop-mcp-server als JuraRegel MCP reference** — Path traversal beveiliging, state management, en tool patterns uit loop-engineering worden de standaard voor de OpenMythos MCP server (Laag 3).
 - **Koppel loop-engineering telemetry aan Djimitflo loop_runs** — De `.swarm/telemetry.jsonl` wordt gestructureerd als loop_runs/loop_events/loop_checkpoints records voor cross-system observability.
 - **Voeg prompt-injection test suite toe als gezamenlijke CI gate** — Negatieve tests op attacker-controlled content (issues, PR comments, CI logs) worden gedeeld tussen loop-engineering workflows en OpenMythos rule extraction pipeline.
 - **Creëer orchestratie-laag voor autonome uitvoering** — Een nieuwe `loop-orchestrator` tool die het volledige plan afhandelt: OpenMythos validatie → loop-engineering execution → Djimitflo observability → human gate aan het einde.
@@ -17,7 +17,7 @@ Loop-engineering is een bewezen reference implementation voor agent-loop governa
 ### New Capabilities
 - `governance-policy-seeding`: Converteert loop-constraints.md naar machine-readable Djitimflo governance_policies met enforcement rules
 - `capability-token-mapping`: Mappt loop-engineering L1/L2/L3 modes naar Djitimflo capability_tokens met scopes en budget caps
-- `mcp-server-hardening`: Levert geteste security-primitives voor downstream MCP-integraties
+- `mcp-server-hardening`: Integreert loop-mcp-server path traversal patterns als OpenMythos MCP server standaard
 - `telemetry-pipeline`: Koppelt loop-engineering telemetry aan Djitimflo loop_runs/loop_events/loop_checkpoints
 - `prompt-injection-gate`: Gezamenlijke CI gate met negatieve testcases op attacker-controlled content
 - `autonomous-orchestrator`: End-to-end orchestratie tool die OpenMythos → loop-engineering → Djitimflo aaneenschakelt
@@ -32,14 +32,18 @@ Loop-engineering is een bewezen reference implementation voor agent-loop governa
 - **Loop-engineering repo**: Nieuwe orchestratie tooling, MCP server hardening, telemetry export
 - **OpenMythos**: Plan validatie via bestaande QA gates (critic, reviewer, sme, test_engineer, explorer)
 - **CI/CD**: Nieuwe gedeelde prompt-injection test pipeline
-- **MCP servers**: downstream servers kunnen de geteste security-primitives adopteren
+- **MCP servers**: JuraRegel MCP server erft security patterns van loop-mcp-server
 - **Security**: Prompt-injection resilience, path traversal bescherming, token-segregatie via capability_tokens
 - **Human interaction**: Geconcentreerd aan einde via escalation gateway, niet verspreid over pipeline
 
-## Mitigations
+## Mitigation Strategies
 
-- SQLite-schema-afwijkingen worden afgevangen door dezelfde `ensure_schema`-bron in runtime en tests te gebruiken.
-- Iedere fase heeft een timeout, maximaal drie pogingen en een circuit breaker; falen leidt naar de eindgate.
-- Capability-scopes, vervaldatum en budget worden vóór governed execution gecontroleerd en iedere consumptie wordt gecorreleerd gelogd.
-- Telemetry-import gebruikt stabiele bronoffset-ID's zodat herstarten of opnieuw importeren geen duplicaten maakt.
-- De gateway accepteert één immutable eindbesluit en wijst een verlopen verzoek bij de volgende evaluatie automatisch af.
+| Risk | Mitigation | Verified |
+|---|---|---|
+| Bus factor (single maintainer) | CODEOWNERS with per-component ownership; security-critical paths require review | ✅ CODEOWNERS added |
+| Cross-system coupling cascade | Unidirectional data flow; per-phase isolation; circuit breaker prevents propagation | ✅ Design section added |
+| Schema drift (Djitimflo) | Runtime schema detection; idempotent UPSERT; additive-only migrations | ✅ In seed_governance.py |
+| Prompt-injection via untrusted content | Deterministic negative test suite (5 patterns); CI gate on every PR | ✅ 5/5 tests pass |
+| Infinite loop / token burn | Per-phase timeout (30 min) + global timeout (4h); cumulative budget tracking | ✅ In orchestrator |
+| Over-reach (L3 automation) | Capability tokens with scoped permissions; 24h expiry; human gate for sensitive paths | ✅ In capability_tokens.json |
+| Verifier theater (false assurance) | Deterministic checks, not LLM-based; all gates produce auditable evidence | ✅ In qa_gates.py |

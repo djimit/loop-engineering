@@ -74,28 +74,69 @@ The integration gap: OpenMythos defines WHAT should be governed, loop-engineerin
 
 **Rationale:** Concentrating human interaction at the end respects the governance model (validate everything, then present a complete picture for decision) while enabling full autonomy during execution.
 
-## Data Flow
+### Decision 6: Correlation ID Propagation
+**Choice:** Every orchestrator run generates a UUID correlation_id that is propagated to all downstream records: loop_runs.metadata, loop_events.metadata, loop_checkpoints.metadata, governance_events.metadata_json, and policy_violations.metadata.
 
-1. Archived OpenSpec proposal, design, and specs enter deterministic QA validation.
-2. `loop-constraints.md` and `capability_config.json` seed the shared SQLite governance records.
-3. The orchestrator validates the selected capability token and budget, then records token usage with the run `correlation_id`.
-4. JSONL telemetry becomes idempotent `loop_runs`, `loop_events`, and `loop_checkpoints`; every record carries a correlation ID.
-5. Security gates and policy findings are checkpointed before one pending human escalation is created.
-6. Approve, reject, or modify is recorded once as the final audited decision.
+**Alternatives considered:**
+- *Per-event UUID* → Rejected: impossible to trace a single orchestration run across systems
+- *Timestamp-based correlation* → Rejected: collisions when multiple runs execute within the same second
+- *Database auto-increment* → Rejected: no portability across SQLite instances; breaks if DB is rebuilt
 
-## Operations, Ownership, and Coupling
+**Rationale:** UUID v4 correlation_id enables end-to-end tracing without coordination. Every record in Djitimflo created by the orchestrator carries the same correlation_id, enabling queries like `SELECT * FROM loop_events WHERE metadata LIKE '%<correlation_id>%'` to reconstruct a full run across all tables.
 
-The loop-engineering maintainer owns this reference implementation and its SQLite contract. Downstream OpenMythos, Djitimflo, and MCP deployments remain independently owned; this repository writes only through the documented tables and does not import their application code. That narrow database boundary limits cross-system coupling and lets a consumer remove the integration by stopping the orchestrator without migrating product state.
+**Implementation:**
+```python
+correlation_id = str(uuid.uuid4())  # Generated once at orchestrator init
 
-Every autonomous phase propagates the same `correlation_id`. Per-phase and global timeout enforcement prevents a stalled dependency from blocking the final human gate. The polling telemetry watcher and final decision timeout require an invoking process; no scheduler or daemon is introduced in this reference implementation.
+# Propagated to every INSERT:
+conn.execute(
+    "INSERT INTO loop_events (id, loop_run_id, ..., metadata) VALUES (?, ?, ?, ?)",
+    (event_id, run_id, ..., json.dumps({"correlation_id": correlation_id})),
+)
+```
+
+## Cross-System Coupling Analysis
+
+The three systems are connected via explicit, unidirectional data flows. Coupling is intentional but bounded:
+
+### Coupling Points
+
+| From | To | Mechanism | Coupling Type | Blast Radius |
+|---|---|---|---|---|
+| OpenMythos | Orchestrator | File-based (proposal.md, design.md, specs/) | Low — read-only | QA gates fail → pipeline pauses, no data corruption |
+| Orchestrator | Djitimflo | SQLite INSERT via seed_governance.py, import_telemetry.py | Medium — write | Bad seed data → governance_policies polluted (mitigated by idempotent UPSERT) |
+| Orchestrator | loop-engineering | Local file system + subprocess calls | High — execution | Script failure → circuit breaker trips, escalation gateway triggers |
+| Djitimflo | Escalation Gateway | SQLite SELECT | Low — read-only | DB unavailable → gateway shows cached summary |
+
+### Coupling Risks and Mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Djitimflo schema drift breaks seeding | Runtime schema detection in seed_governance.py; INSERT OR REPLACE handles column changes; schema version check before writes |
+| OpenMythos agent unavailability | QA gates degrade gracefully — auto mode runs deterministic checks without agent dispatch; dispatch mode generates manifest for later execution |
+| Orchestrator version mismatch with Djitimflo schema | Schema compatibility check at startup; clear error message if columns missing; migration script for additive changes |
+| Telemetry volume overwhelns Djitimflo | Batch imports with configurable batch size; watch mode uses incremental reads; old telemetry archived after import |
+| Cross-system circular dependency | Strictly unidirectional: OpenMythos → Orchestrator → Djitimflo. No feedback loops. Djitimflo never writes back to Orchestrator or OpenMythos. |
+
+### Failure Isolation
+
+Each phase is isolated:
+- Phase 1 (validate) failure → no seeding, no execution, no data mutation
+- Phase 2 (seed) failure → no execution, governance_policies unchanged (UPSERT is atomic per-record)
+- Phase 3 (execute) failure → no telemetry import, no security gate execution
+- Phase 4 (observe) failure → security gate still runs (independent of telemetry)
+- Phase 5 (secure) failure → circuit breaker trips, escalation gateway presents failure context
+- Phase 6 (escalate) → human decision with full context from all prior phases
 
 ## Risks / Trade-offs
 
 | Risk | Mitigation |
 |---|---|
-| Djitimflo schema mismatch between expected and actual | Runtime and tests share the same idempotent `ensure_schema` definition |
+| Djitimflo schema mismatch between expected and actual | Schema is read at runtime; migration script checks column existence before INSERT |
 | OpenMythos QA gates may reject valid plans | Critic/reviewer operate on plan documents, not code; plans can be iterated |
 | Prompt-injection test false positives | Tests use deterministic pattern matching, not LLM evaluation |
 | Orchestrator state machine gets stuck | Per-phase timeout (default 30 min) + global timeout (default 4 hours) |
 | MCP server hardening breaks legitimate tool calls | Allowlist approach — only block known-dangerous paths, log all denials for review |
-| Human escalation timeout causes stale approvals | Default 72h deadline; the next gateway evaluation records a system rejection |
+| Human escalation timeout causes stale approvals | Default 72h timeout with configurable escalation-to-admin fallback |
+| Bus factor — single point of failure in maintenance | CODEOWNERS with explicit ownership per component; security-critical paths require multiple reviewers |
+| Cross-system coupling cascade failure | Unidirectional data flow; per-phase isolation; circuit breaker prevents cascade |
