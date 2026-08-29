@@ -13,9 +13,7 @@ Can run in two modes:
 """
 
 import json
-import logging
 import os
-import re
 import sys
 import uuid
 from datetime import datetime
@@ -23,7 +21,6 @@ from pathlib import Path
 
 from config import REPO_ROOT, get_db_path
 
-logger = logging.getLogger(__name__)
 # Check active location first, fall back to archive
 _active = REPO_ROOT / "openspec" / "changes" / "loop-engineering-ecosystem-integration"
 _archived = (

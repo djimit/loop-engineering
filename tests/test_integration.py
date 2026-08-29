@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 _fd, _tmp_db = tempfile.mkstemp(suffix=".sqlite", prefix="loop_test_")
@@ -70,16 +71,13 @@ def test_autonomous_execution():
         text=True,
         timeout=120,
     )
-    # L1 mode should complete (may fail on validation but should not hang)
-    check(
-        result.returncode in (0, 1),
-        f"Orchestrator exited with unexpected code: {result.returncode}",
-    )
-    check(
-        '"escalate": "completed"' in result.stdout
-        or '"status": "completed"' in result.stdout,
-        "Orchestrator should complete all phases including escalation",
-    )
+    check(result.returncode == 0, result.stderr or result.stdout)
+    data = json.loads(result.stdout.split("\n\nDecision required", 1)[0])
+    check(data["autonomous_status"] == "completed", data)
+    check(data["status"] == "awaiting_human", data)
+    check(data["phase_status"]["escalate"] == "awaiting_human", data)
+    check(data["token_usage"] <= data["budget_cap"], data)
+    check(data["escalation"]["decision"] == "pending", data)
     return True
 
 
@@ -102,7 +100,104 @@ def test_djitimflo_tables_populated():
     gov_events = conn.execute("SELECT COUNT(*) FROM governance_events").fetchone()[0]
     check(gov_events > 0, "governance_events should have records")
 
+    usage = conn.execute("SELECT SUM(total_tokens) FROM token_usage_log").fetchone()[0]
+    check(usage == 8000, f"Expected 8000 logged tokens, got {usage}")
+
+    escalation = conn.execute(
+        "SELECT COUNT(*) FROM governance_events WHERE action_type='human_escalation_requested'"
+    ).fetchone()[0]
+    check(escalation == 1, f"Expected one escalation request, got {escalation}")
+
     conn.close()
+    return True
+
+
+def test_telemetry_import_is_idempotent():
+    """Test: re-importing the same source creates no duplicate events."""
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    from import_telemetry import import_telemetry
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "telemetry.jsonl"
+        path.write_text(
+            '{"event":"session_started","sessionId":"s1","agentName":"test"}\n'
+            '{"event":"heartbeat","sessionId":"s1","agentName":"test"}\n'
+        )
+        conn = sqlite3.connect(DJITIMFLO_DB)
+        first = import_telemetry(conn, path)
+        second = import_telemetry(conn, path)
+        with path.open("a") as telemetry:
+            telemetry.write(
+                '{"event":"agent_activated","sessionId":"s1","agentName":"test"}\n'
+            )
+        appended = import_telemetry(conn, path, first["next_offset"])
+        conn.commit()
+        conn.close()
+    check(first["imported"] == 2, first)
+    check(second["imported"] == 0, second)
+    check(appended["imported"] == 1, appended)
+    return True
+
+
+def test_budget_enforcement():
+    """Test: a phase cannot exceed the selected mode budget."""
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    from loop_orchestrator import BudgetExceeded, Orchestrator
+
+    orchestrator = Orchestrator("L1", DJITIMFLO_DB)
+    orchestrator.token_usage = orchestrator.budget_cap
+    try:
+        try:
+            orchestrator._consume_budget("validate")
+        except BudgetExceeded:
+            return True
+        raise AssertionError("Budget overrun should be rejected")
+    finally:
+        orchestrator.close()
+
+
+def test_final_human_decision():
+    """Test: the final gateway reads the schema and records one human decision."""
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    from escalation_gateway import generate_summary, record_decision
+
+    conn = sqlite3.connect(DJITIMFLO_DB)
+    run_id = conn.execute(
+        "SELECT id FROM loop_runs WHERE status='escalated' ORDER BY created_at DESC"
+    ).fetchone()[0]
+    conn.close()
+    summary = generate_summary(run_id)
+    check(summary["escalation"]["decision"] == "pending", summary)
+    check(summary["token_usage"] == 8000, summary)
+    record_decision(run_id, "approve", "integration test")
+    check(generate_summary(run_id)["status"] == "completed", "Decision not applied")
+    try:
+        record_decision(run_id, "reject", "second decision")
+    except ValueError:
+        return True
+    raise AssertionError("A second decision should be rejected")
+
+
+def test_escalation_timeout():
+    """Test: an expired final decision is automatically rejected."""
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    from escalation_gateway import expire_pending_decision, request_escalation
+
+    conn = sqlite3.connect(DJITIMFLO_DB)
+    run_id = "expired-run"
+    conn.execute(
+        """INSERT INTO loop_runs (id, loop_name, mode, status, created_at)
+           VALUES (?, 'test', 'open', 'running', ?)""",
+        (run_id, datetime.now().astimezone().isoformat()),
+    )
+    request = request_escalation(conn, run_id)
+    conn.close()
+    future = datetime.fromisoformat(request["expires_at"]) + timedelta(seconds=1)
+    check(expire_pending_decision(run_id, future), "Expired request was not rejected")
+    conn = sqlite3.connect(DJITIMFLO_DB)
+    status = conn.execute("SELECT status FROM loop_runs WHERE id=?", (run_id,)).fetchone()[0]
+    conn.close()
+    check(status == "cancelled", status)
     return True
 
 
@@ -124,33 +219,41 @@ def test_prompt_injection_gate():
 
 
 def test_circuit_breaker():
-    """Test: Circuit breaker schema and basic operations work."""
+    """Test: three phase failures skip unsafe work and reach the final gate."""
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    import loop_orchestrator
+
+    orchestrator = loop_orchestrator.Orchestrator("L1", DJITIMFLO_DB)
+    calls = 0
+
+    def fail_validation():
+        nonlocal calls
+        calls += 1
+        return {"success": False, "findings": ["forced failure"]}
+
+    original_sleep = loop_orchestrator.time.sleep
+    loop_orchestrator.time.sleep = lambda _seconds: None
+    orchestrator._phase_validate = fail_validation
+    try:
+        result = orchestrator.run()
+    finally:
+        orchestrator.close()
+        loop_orchestrator.time.sleep = original_sleep
+
+    check(calls == 3, f"Expected 3 attempts, got {calls}")
+    check(result["autonomous_status"] == "failed", result)
+    check(result["phase_status"]["validate"] == "failed", result)
+    check(result["phase_status"]["seed"] == "skipped", result)
+    check(result["phase_status"]["escalate"] == "awaiting_human", result)
     conn = sqlite3.connect(DJITIMFLO_DB)
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS governance_circuit_breaker (
-            agent_id TEXT PRIMARY KEY, failures INTEGER DEFAULT 0,
-            tripped INTEGER DEFAULT 0, last_failure_at TEXT, updated_at TEXT
-        )"""
+    state = json.loads(
+        conn.execute(
+            "SELECT state_json FROM loop_checkpoints WHERE loop_run_id=?",
+            (result["run_id"],),
+        ).fetchone()[0]
     )
-    # Insert a test record
-    conn.execute(
-        "INSERT OR REPLACE INTO governance_circuit_breaker (agent_id, failures, tripped) VALUES (?, ?, ?)",
-        ("test_agent", 3, 1),
-    )
-    conn.commit()
-    row = conn.execute(
-        "SELECT tripped, failures FROM governance_circuit_breaker WHERE agent_id = ?",
-        ("test_agent",),
-    ).fetchone()
-    check(row is not None, "Circuit breaker record should exist")
-    check(row[0] == 1, "Circuit breaker should be tripped")
-    check(row[1] == 3, "Circuit breaker should have 3 failures")
-    # Cleanup
-    conn.execute(
-        "DELETE FROM governance_circuit_breaker WHERE agent_id = ?", ("test_agent",)
-    )
-    conn.commit()
     conn.close()
+    check(state["attempts"] == 3, state)
     return True
 
 
@@ -179,6 +282,10 @@ def main():
         ("qa_gates_dispatch", test_qa_gates_dispatch),
         ("autonomous_execution", test_autonomous_execution),
         ("djitimflo_tables_populated", test_djitimflo_tables_populated),
+        ("telemetry_import_is_idempotent", test_telemetry_import_is_idempotent),
+        ("budget_enforcement", test_budget_enforcement),
+        ("final_human_decision", test_final_human_decision),
+        ("escalation_timeout", test_escalation_timeout),
         ("circuit_breaker", test_circuit_breaker),
     ]
 

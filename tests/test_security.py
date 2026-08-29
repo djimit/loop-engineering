@@ -20,22 +20,22 @@ def check(condition, msg=""):
 
 
 def test_safe_segment_valid():
-    check(assert_safe_segment("abc123") == True, "abc123 should be safe")
-    check(assert_safe_segment("loop-run-1") == True, "loop-run-1 should be safe")
+    check(assert_safe_segment("abc123"), "abc123 should be safe")
+    check(assert_safe_segment("loop-run-1"), "loop-run-1 should be safe")
     check(
-        assert_safe_segment("feature_branch") == True, "feature_branch should be safe"
+        assert_safe_segment("feature_branch"), "feature_branch should be safe"
     )
 
 
 def test_safe_segment_invalid():
-    check(assert_safe_segment("") == False, "empty should be unsafe")
+    check(not assert_safe_segment(""), "empty should be unsafe")
     check(
-        assert_safe_segment("-leading-dash") == False, "leading dash should be unsafe"
+        not assert_safe_segment("-leading-dash"), "leading dash should be unsafe"
     )
-    check(assert_safe_segment("has/slash") == False, "slash should be unsafe")
-    check(assert_safe_segment("has..dotdot") == False, "dotdot should be unsafe")
-    check(assert_safe_segment("has space") == False, "space should be unsafe")
-    check(assert_safe_segment("a" * 256) == False, "256 chars should be unsafe")
+    check(not assert_safe_segment("has/slash"), "slash should be unsafe")
+    check(not assert_safe_segment("has..dotdot"), "dotdot should be unsafe")
+    check(not assert_safe_segment("has space"), "space should be unsafe")
+    check(not assert_safe_segment("a" * 256), "256 chars should be unsafe")
 
 
 def test_safe_path_within_base():
@@ -68,29 +68,29 @@ def test_safe_path_blocks_absolute():
 
 
 def test_state_file_allowlist():
-    check(is_state_file_allowed("STATE.md") == True)
-    check(is_state_file_allowed("LOOP.md") == True)
-    check(is_state_file_allowed("auth.json") == False)
-    check(is_state_file_allowed(".env") == False)
-    check(is_state_file_allowed("../etc/passwd") == False)
+    check(is_state_file_allowed("STATE.md"))
+    check(is_state_file_allowed("LOOP.md"))
+    check(not is_state_file_allowed("auth.json"))
+    check(not is_state_file_allowed(".env"))
+    check(not is_state_file_allowed("../etc/passwd"))
 
 
 def test_git_ref_valid():
-    check(validate_git_ref("main") == True, "main should be valid ref")
+    check(validate_git_ref("main"), "main should be valid ref")
     check(
-        validate_git_ref("feature/my-feature") == True,
+        validate_git_ref("feature/my-feature"),
         "feature/my-feature should be valid ref",
     )
-    check(validate_git_ref("loop/run-123") == True, "loop/run-123 should be valid ref")
+    check(validate_git_ref("loop/run-123"), "loop/run-123 should be valid ref")
 
 
 def test_git_ref_invalid():
-    check(validate_git_ref("") == False)
-    check(validate_git_ref(".hidden") == False)
-    check(validate_git_ref("has..dotdot") == False)
-    check(validate_git_ref("has space") == False)
-    check(validate_git_ref("has~tilde") == False)
-    check(validate_git_ref("has^caret") == False)
+    check(not validate_git_ref(""))
+    check(not validate_git_ref(".hidden"))
+    check(not validate_git_ref("has..dotdot"))
+    check(not validate_git_ref("has space"))
+    check(not validate_git_ref("has~tilde"))
+    check(not validate_git_ref("has^caret"))
 
 
 def test_safe_path_null_bytes():
@@ -122,10 +122,10 @@ def test_safe_path_unicode():
 
 def test_git_ref_unicode():
     # Unicode is allowed by git ref format (only control chars and special chars denied)
-    check(validate_git_ref("feature/café") == True)
-    check(validate_git_ref("user/日本語") == True)
+    check(validate_git_ref("feature/café"))
+    check(validate_git_ref("user/日本語"))
     # But unicode control characters are still denied
-    check(validate_git_ref("feature\x00null") == False)
+    check(not validate_git_ref("feature\x00null"))
 
 
 def main():
