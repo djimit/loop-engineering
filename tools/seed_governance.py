@@ -21,6 +21,14 @@ DJITIMFLO_DB = get_db_path()
 logger = logging.getLogger(__name__)
 CONSTRAINTS_FILE = REPO_ROOT / "loop-constraints.md"
 TOKEN_CONFIG_FILE = REPO_ROOT / "tools" / "capability_config.json"
+_VIOLATION_NAMESPACE = uuid.UUID("39f7f447-6f1f-4a4c-9e8a-3d1a5cf2d6e7")
+
+
+def _stable_violation_id(workflow_path: Path, policy_id: str) -> str:
+    """Deterministic id so re-detected drift updates instead of duplicating."""
+    return str(
+        uuid.uuid5(_VIOLATION_NAMESPACE, f"{workflow_path.resolve()}:{policy_id}")
+    )
 
 
 def parse_constraints(md_path: Path) -> list[dict]:
@@ -195,10 +203,10 @@ def detect_drift(conn: sqlite3.Connection, workflows_dir: Path) -> list[dict]:
         content = wf_file.read_text()
         # Check for auto-merge patterns
         if "gh pr merge" in content or "auto-merge" in content:
-            policy = conn.execute(
+            policy_row = conn.execute(
                 "SELECT id FROM governance_policies WHERE id = 'no-auto-merge-main'"
             ).fetchone()
-            if policy:
+            if policy_row:
                 violations.append(
                     {
                         "file": str(wf_file),
@@ -206,13 +214,20 @@ def detect_drift(conn: sqlite3.Connection, workflows_dir: Path) -> list[dict]:
                         "issue": "Workflow contains auto-merge command",
                     }
                 )
+                # Idempotent: dedupe on stable id so repeated orchestrator
+                # runs (and seed-phase retries) don't spam duplicate rows.
+                violation_id = _stable_violation_id(wf_file, policy_row[0])
                 conn.execute(
                     """INSERT INTO policy_violations
                        (id, policy_id, action_type, risk_level, status,
                         description, metadata)
                        VALUES (?, 'no-auto-merge-main', 'constraint_drift',
-                               'high', 'open', ?, '{}')""",
-                    (str(uuid.uuid4()), f"{wf_file}: auto-merge found"),
+                               'high', 'open', ?, '{}')
+                       ON CONFLICT(id) DO NOTHING""",
+                    (
+                        violation_id,
+                        f"{wf_file}: auto-merge found",
+                    ),
                 )
 
     return violations

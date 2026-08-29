@@ -87,6 +87,10 @@ DDL_STATEMENTS = [
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create all required tables if they don't exist."""
+    """Configure connection pragmas and create all required tables."""
+    # WAL + busy_timeout: concurrent writers (orchestrator, watch mode, gateway)
+    # otherwise hit "database is locked" with SQLite's default 0ms busy timeout.
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA journal_mode = WAL")
     for stmt in DDL_STATEMENTS:
         conn.execute(stmt)

@@ -162,10 +162,14 @@ class Orchestrator:
             raise PermissionError(f"Mode {self.mode} does not grant scope {scope}")
         token = self._token()
         if not token:
-            return
+            raise PermissionError(
+                f"No capability token found for mode {self.mode}; authorization fails closed"
+            )
         expires_at = datetime.fromisoformat(token[3].replace("Z", "+00:00"))
         if token[2] != "active" or expires_at <= datetime.now().astimezone():
-            raise PermissionError(f"Capability token for {self.mode} is inactive or expired")
+            raise PermissionError(
+                f"Capability token for {self.mode} is inactive or expired"
+            )
         if scope not in json.loads(token[1]):
             raise PermissionError(f"Capability token does not grant scope {scope}")
 
@@ -231,7 +235,9 @@ class Orchestrator:
                 if time.monotonic() - started > PHASE_TIMEOUT:
                     result = {
                         "success": False,
-                        "findings": [f"Phase {phase} exceeded {PHASE_TIMEOUT}s timeout"],
+                        "findings": [
+                            f"Phase {phase} exceeded {PHASE_TIMEOUT}s timeout"
+                        ],
                     }
                 if result["success"]:
                     return result
@@ -272,9 +278,7 @@ class Orchestrator:
         self._log_event("run_started", f"Orchestrator started in {self.mode} mode")
         seed_capability_tokens(self.conn)
         self.conn.commit()
-        self._log_audit(
-            "capability_preflight", "Refreshed expiring capability tokens"
-        )
+        self._log_audit("capability_preflight", "Refreshed expiring capability tokens")
 
         escalation_only = False
         escalation = None
@@ -415,8 +419,14 @@ class Orchestrator:
         return {
             "success": not failures,
             "gates": [
-                {"gate": "prompt_injection", "status": "pass" if not failures else "fail"},
-                {"gate": "path_validation", "status": "pass" if not failures else "fail"},
+                {
+                    "gate": "prompt_injection",
+                    "status": "pass" if not failures else "fail",
+                },
+                {
+                    "gate": "path_validation",
+                    "status": "pass" if not failures else "fail",
+                },
                 {"gate": "token_scope", "status": "pass"},
             ],
             "findings": failures,

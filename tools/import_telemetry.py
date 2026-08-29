@@ -43,6 +43,11 @@ def import_telemetry(
             line = telemetry.readline()
             if not line:
                 break
+            # A line not ending in '\n' at EOF is partially written by the
+            # telemetry emitter; don't advance the offset past it — the next
+            # poll re-reads the complete line.
+            if not line.endswith("\n"):
+                break
             stats["next_offset"] = telemetry.tell()
             if not line.strip():
                 continue
@@ -55,7 +60,7 @@ def import_telemetry(
             event = entry.get("event", "unknown")
             session_id = entry.get("sessionId", "")
             agent_name = entry.get("agentName", "")
-            timestamp = entry.get("timestamp", datetime.now().isoformat())
+            timestamp = entry.get("timestamp", datetime.now().astimezone().isoformat())
             correlation_id = _stable_id(source, session_id or "orphan")
             run_id = _stable_id(source, session_id or "orphan")
 
