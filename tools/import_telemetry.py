@@ -159,7 +159,7 @@ def watch_mode(
 
 
 def main() -> int:
-    conn = sqlite3.connect(DJITIMFLO_DB)
+    conn = sqlite3.connect(__import__("os").environ.get("LOOP_DB_PATH", DJITIMFLO_DB))
     ensure_schema(conn)
 
     if "--watch" in sys.argv[1:]:

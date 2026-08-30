@@ -3,15 +3,20 @@
 
 Deterministic pattern matching for injection detection — no LLM evaluation.
 Each test verifies that attacker-controlled input cannot alter agent behavior.
+Patterns come from tools/injection_patterns.py (single source of truth,
+shared with the enforcement gate).
 """
 
 import json
 import os
-import re
 import sqlite3
 import sys
 import tempfile
 import uuid
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "tools"))
+
+from injection_patterns import detect_injection  # noqa: E402
 
 _owns_db = "LOOP_DB_PATH" not in os.environ
 if _owns_db:
@@ -19,35 +24,6 @@ if _owns_db:
     os.close(_db_fd)
     os.environ["LOOP_DB_PATH"] = _db_path
 DJITIMFLO_DB = os.environ["LOOP_DB_PATH"]
-
-# Injection patterns — deterministic detection
-INJECTION_PATTERNS = {
-    "ignore_instructions": re.compile(
-        r"ignore\s+(previous|all|above|prior|the\s+above)\s+(instructions|rules|constraints|guidelines)",
-        re.IGNORECASE,
-    ),
-    "secret_extraction": re.compile(
-        r"(print|show|display|reveal|dump|export|send|me)\s+(all\s+|the\s+)?(secrets?|credentials?|api.?keys?|tokens?|passwords?|environment)",
-        re.IGNORECASE,
-    ),
-    "unauthorized_merge": re.compile(
-        r"(merge|approve)\s+(this|the)\s+PR(\s+immediately|\s+now|\s+without\s+review)?",
-        re.IGNORECASE,
-    ),
-    "test_disabling": re.compile(
-        r"(disable|skip|bypass|ignore)\s+(all\s+)?(tests?|checks?|validations?|gates?|the\s+checks)",
-        re.IGNORECASE,
-    ),
-}
-
-
-def detect_injection(text: str) -> list[str]:
-    """Detect injection patterns in text. Returns list of matched pattern names."""
-    matches = []
-    for name, pattern in INJECTION_PATTERNS.items():
-        if pattern.search(text):
-            matches.append(name)
-    return matches
 
 
 def log_injection_attempt(conn: sqlite3.Connection, pattern_name: str, source: str):
