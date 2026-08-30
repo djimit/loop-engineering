@@ -16,6 +16,12 @@ ESCALATION_TIMEOUT_HOURS = int(os.environ.get("ESCALATION_TIMEOUT_HOURS", 72))
 DECISIONS = {"approve", "reject", "modify"}
 
 
+def _db() -> str:
+    # Lazy binding: resolve at call time so processes/tests that change
+    # LOOP_DB_PATH after import get the correct database.
+    return os.environ.get("LOOP_DB_PATH", DJITIMFLO_DB)
+
+
 def _now() -> datetime:
     return datetime.now().astimezone()
 
@@ -35,6 +41,10 @@ def request_escalation(conn: sqlite3.Connection, run_id: str) -> dict:
     ).fetchone()
     if row:
         return json.loads(row[0])
+
+    # Fail-closed: an escalation can only be bound to an existing run.
+    if not conn.execute("SELECT 1 FROM loop_runs WHERE id=?", (run_id,)).fetchone():
+        raise ValueError(f"Run {run_id} not found")
 
     requested_at = _now()
     payload = {
@@ -61,7 +71,7 @@ def request_escalation(conn: sqlite3.Connection, run_id: str) -> dict:
 
 def generate_summary(run_id: str) -> dict:
     """Return the persisted phase, finding, violation, and decision state."""
-    conn = sqlite3.connect(DJITIMFLO_DB)
+    conn = sqlite3.connect(_db())
     try:
         ensure_schema(conn)
         run = conn.execute(
@@ -79,7 +89,8 @@ def generate_summary(run_id: str) -> dict:
         ).fetchall()
         violations = conn.execute(
             """SELECT action_type, description, risk_level FROM policy_violations
-               WHERE status != 'resolved' ORDER BY created_at"""
+               WHERE status != 'resolved'
+                 AND (task_id IS NULL OR task_id = '')"""
         ).fetchall()
         request = conn.execute(
             """SELECT metadata_json FROM governance_events
@@ -160,7 +171,7 @@ def record_decision(
     if decision not in DECISIONS:
         raise ValueError(f"decision must be one of: {', '.join(sorted(DECISIONS))}")
 
-    conn = sqlite3.connect(DJITIMFLO_DB)
+    conn = sqlite3.connect(_db())
     try:
         ensure_schema(conn)
         if not conn.execute("SELECT 1 FROM loop_runs WHERE id=?", (run_id,)).fetchone():
@@ -242,7 +253,7 @@ def main() -> int:
 
     run_id = args.run_id
     if not run_id:
-        conn = sqlite3.connect(DJITIMFLO_DB)
+        conn = sqlite3.connect(_db())
         ensure_schema(conn)
         row = conn.execute(
             "SELECT id FROM loop_runs ORDER BY created_at DESC LIMIT 1"

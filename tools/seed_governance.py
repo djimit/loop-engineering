@@ -237,7 +237,9 @@ def main():
     constraints = parse_constraints(CONSTRAINTS_FILE)
     logger.info("Parsed %d constraints from %s", len(constraints), CONSTRAINTS_FILE)
 
-    conn = sqlite3.connect(DJITIMFLO_DB)
+    import os
+
+    conn = sqlite3.connect(os.environ.get("LOOP_DB_PATH", DJITIMFLO_DB))
     ensure_tables(conn)
 
     policy_count = seed_policies(conn, constraints)
